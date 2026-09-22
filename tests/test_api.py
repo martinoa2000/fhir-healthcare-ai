@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from fhir_healthcare_ai.api.main import create_app
 from fhir_healthcare_ai.audit import InMemoryAuditSink
-from fhir_healthcare_ai.config import FHIRSettings, Settings
+from fhir_healthcare_ai.config import FHIRSettings, SecuritySettings, Settings
 from fhir_healthcare_ai.fhir.memory import InMemoryFHIRServer
 from fhir_healthcare_ai.llm.base import LLMMessage, LLMProvider, LLMResponse, LLMUnavailableError
 from fhir_healthcare_ai.llm.mock import MockLLMProvider
@@ -31,11 +31,14 @@ def _app(
     environment: str = "local",
 ) -> tuple[TestClient, InMemoryFHIRServer]:
     server = InMemoryFHIRServer(resources=dataset.resources, read_only=True)
+    # prod refuses to start without API keys, so give it one and send it by default.
+    prod = environment == "prod"
     settings = Settings(
         environment=environment,  # type: ignore[arg-type]
         log_json=False,
         log_level="ERROR",
         fhir=FHIRSettings(base_url=server.base_url, max_retries=0),
+        security=SecuritySettings(api_keys={"tests": "prod-test-key"} if prod else {}),
     )
     audit = InMemoryAuditSink()
     app = create_app(
@@ -44,7 +47,8 @@ def _app(
         provider=provider or MockLLMProvider(),
         audit=audit,
     )
-    return TestClient(app), server
+    headers = {"X-API-Key": "prod-test-key"} if prod else None
+    return TestClient(app, headers=headers), server
 
 
 @pytest.fixture

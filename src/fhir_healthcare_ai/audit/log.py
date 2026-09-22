@@ -21,7 +21,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from fhir_healthcare_ai.logging_config import correlation_id_var, get_logger
+from fhir_healthcare_ai.logging_config import actor_var, correlation_id_var, get_logger
 
 logger = get_logger("audit")
 
@@ -50,7 +50,9 @@ class AuditEvent(BaseModel):
     correlation_id: str = Field(default_factory=lambda: correlation_id_var.get() or "-")
     action: AuditAction
     outcome: Outcome = "success"
-    actor: str = "system"
+    #: The authenticated API key name bound by the security layer, for the same reason as
+    #: ``correlation_id``. ``"system"`` outside a request (startup, CLI tools).
+    actor: str = Field(default_factory=lambda: actor_var.get() or "system")
     resource_type: str | None = None
     query: str | None = None
     patient_ids: list[str] = Field(default_factory=list)
@@ -81,6 +83,7 @@ class LoggingAuditSink(AuditSink):
                 "audit_action": event.action,
                 "audit_outcome": event.outcome,
                 "correlation_id": event.correlation_id,
+                "actor": event.actor,
                 "resource_type": event.resource_type,
                 "query": event.query,
                 "resource_count": event.resource_count,

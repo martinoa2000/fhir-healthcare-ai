@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Annotated
 
-from fastapi import FastAPI, HTTPException, Path, Query, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Path, Query, Request, Response
 from fastapi.responses import JSONResponse
 
 from fhir_healthcare_ai import __version__
@@ -38,6 +38,7 @@ from fhir_healthcare_ai.api.schemas import (
     LLMStatus,
     QueryRequest,
 )
+from fhir_healthcare_ai.api.security import RATE_LIMITED, authenticate, install_security
 from fhir_healthcare_ai.audit import AuditEvent, AuditSink, InMemoryAuditSink, build_audit_sink
 from fhir_healthcare_ai.audit.log import CompositeAuditSink
 from fhir_healthcare_ai.config import Settings, get_settings
@@ -135,7 +136,11 @@ def create_app(
         ),
         lifespan=lifespan,
         responses={500: {"model": ErrorResponse}},
+        # App-wide, so every route (including ones added later) is authenticated unless
+        # security.PUBLIC_ROUTES exempts it.
+        dependencies=[Depends(authenticate)],
     )
+    install_security(app, resolved.security)
     app.middleware("http")(_correlation_middleware)
     _register_routes(app)
     return app
@@ -328,6 +333,7 @@ def _register_routes(app: FastAPI) -> None:
         tags=["clinical"],
         summary="Answer a natural-language clinical question",
         responses={422: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
+        dependencies=[RATE_LIMITED],
     )
     async def query(body: QueryRequest, request: Request) -> QueryResponse:
         """Plan, validate, retrieve and analyse. Every claim carries its FHIR evidence."""
@@ -348,6 +354,7 @@ def _register_routes(app: FastAPI) -> None:
         tags=["clinical"],
         summary="Analyse one patient's record",
         responses={404: {"model": ErrorResponse}, 502: {"model": ErrorResponse}},
+        dependencies=[RATE_LIMITED],
     )
     async def analyze_patient(
         request: Request,

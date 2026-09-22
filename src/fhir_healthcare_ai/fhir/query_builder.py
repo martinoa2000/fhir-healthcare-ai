@@ -61,7 +61,7 @@ class FHIRQueryBuilder:
         base_params = self._base_params(step)
         scoped_ids = sorted(set(patient_ids)) if patient_ids is not None else None
 
-        if not scoped_ids or not step.is_patient_scoped:
+        if not scoped_ids:
             return [
                 FHIRQuery(
                     resource_type=step.resource_type,
@@ -71,12 +71,20 @@ class FHIRQueryBuilder:
             ]
 
         queries: list[FHIRQuery] = []
-        explicit = {name for name, _ in base_params}
-        scope_param = "patient" if "patient" not in explicit else "_id"
-        if scope_param == "_id":
-            # The step already pins `patient`; re-scoping would silently widen it.
-            scope_param = "patient"
-            base_params = [(n, v) for n, v in base_params if n != "patient"]
+        if not step.is_patient_scoped:
+            # A dependent Patient step ("...diabetic patients older than 65") is scoped by
+            # its own logical id. Left unscoped it would fetch the demographics of every
+            # matching patient on the server, not just the parent cohort's: more data than
+            # the question needs, and a `depends_on` that silently does nothing. A second
+            # `_id` alongside one the step already pins ANDs with it, so it only narrows.
+            scope_param = "_id"
+        else:
+            explicit = {name for name, _ in base_params}
+            scope_param = "patient" if "patient" not in explicit else "_id"
+            if scope_param == "_id":
+                # The step already pins `patient`; re-scoping would silently widen it.
+                scope_param = "patient"
+                base_params = [(n, v) for n, v in base_params if n != "patient"]
 
         for chunk in _chunk(scoped_ids, PATIENT_CHUNK_SIZE):
             params = [*base_params, (scope_param, ",".join(chunk))]

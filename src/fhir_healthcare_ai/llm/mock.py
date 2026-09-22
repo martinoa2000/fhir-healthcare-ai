@@ -22,35 +22,42 @@ import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from itertools import pairwise
 from typing import Any
 
 from fhir_healthcare_ai.llm.base import LLMMessage, LLMProvider, LLMResponse
 from fhir_healthcare_ai.logging_config import get_logger
-from fhir_healthcare_ai.terminology import LOINC, RXNORM
+from fhir_healthcare_ai.terminology import (
+    ENCOUNTER_CLASS,
+    LOINC,
+    RXNORM,
+    ConceptKind,
+    UnitConversionError,
+    concepts_by_kind,
+    concepts_with_tag,
+    convert_value,
+    normalize_unit,
+    require_concept,
+)
 
 logger = get_logger(__name__)
 
 MODEL_NAME = "mock-rule-planner"
 
+
+def _tagged(tag: str) -> tuple[str, ...]:
+    """Concept keys carrying a terminology tag, in terminology order.
+
+    Drug groups are read from the terminology rather than listed here, so a drug added
+    to a class there is picked up by every rule that names the class.
+    """
+    return tuple(c.key for c in concepts_with_tag(tag))
+
+
 # Concept groups the rules compose plans from.
-DIABETES_DRUGS: tuple[str, ...] = (
-    "metformin",
-    "glipizide",
-    "sitagliptin",
-    "empagliflozin",
-    "dapagliflozin",
-    "semaglutide",
-    "liraglutide",
-    "insulin_glargine",
-)
-ANTIHYPERTENSIVES: tuple[str, ...] = (
-    "lisinopril",
-    "losartan",
-    "amlodipine",
-    "hydrochlorothiazide",
-    "metoprolol",
-)
-STATINS: tuple[str, ...] = ("atorvastatin", "simvastatin")
+DIABETES_DRUGS: tuple[str, ...] = _tagged("diabetes_medication")
+ANTIHYPERTENSIVES: tuple[str, ...] = _tagged("antihypertensive")
+STATINS: tuple[str, ...] = _tagged("statin")
 
 
 @dataclass(frozen=True)
@@ -63,14 +70,19 @@ class Rule:
         keywords: Every group must have at least one member present in the question.
             Nested tuples are OR, the outer tuple is AND.
         build: Produces the plan dict for a question that matched.
+        predicate: Extra check on the lower-cased question, for rules that must parse
+            it (a drug name, a threshold) rather than spot keywords.
     """
 
     name: str
     keywords: tuple[tuple[str, ...], ...]
     build: Callable[[str, datetime], dict[str, Any]]
+    predicate: Callable[[str], bool] | None = None
 
     def matches(self, question: str) -> bool:
-        return all(any(word in question for word in group) for group in self.keywords)
+        if not all(any(word in question for word in group) for group in self.keywords):
+            return False
+        return self.predicate is None or self.predicate(question)
 
 
 class MockLLMProvider(LLMProvider):
@@ -509,6 +521,660 @@ def _abnormal_potassium(question: str, today: datetime) -> dict[str, Any]:
     }
 
 
+# -- question parsing for the composable rules ------------------------------------------
+#
+# The rules above each recognise one fixed question. The rules below recognise a
+# *shape* ("patients on <drug>", "<condition> patients older than <n>") and read the
+# variable parts out of the question. The vocabulary they read is generated from the
+# terminology, so a concept added there is recognised here without a code change.
+#
+# Every parsed rule is strict about what it does *not* understand: a rule that can express
+# a drug filter but not a lab filter declines a question that names both, instead of
+# answering half of it. A declined question falls through to the next rule and, in the
+# end, to an honest refusal.
+
+
+@dataclass(frozen=True)
+class _Term:
+    """One phrase the parser recognises and the concept keys it stands for."""
+
+    phrase: str
+    kind: str  # "condition" | "drug" | "lab" | "measure"
+    keys: tuple[str, ...]
+    pattern: re.Pattern[str]
+
+
+def _term(phrase: str, kind: str, keys: Sequence[str]) -> _Term:
+    # Word-bounded with an optional plural, so "arb" never matches inside "carbon" while
+    # "statins" and "sglt2 inhibitors" still match their singular phrase.
+    pattern = re.compile(rf"\b{re.escape(phrase)}(?:s|es)?\b")
+    return _Term(phrase=phrase, kind=kind, keys=tuple(keys), pattern=pattern)
+
+
+def _normalize(text: str) -> str:
+    """Lower-case, hyphens as spaces, and "SGLT-2" / "GLP 1" folded to "sglt2" / "glp1"."""
+    text = text.lower().replace("-", " ")
+    text = re.sub(r"\b(sglt|glp|dpp)\s+(\d)\b", r"\1\2", text)
+    return re.sub(r"\s+", " ", text)
+
+
+def _names(key: str, display: str) -> set[str]:
+    return {key.replace("_", " "), _normalize(display)}
+
+
+# Colloquial names the terminology does not carry. Each maps onto terminology keys or
+# tags; nothing here is a code.
+_CONDITION_ALIASES: dict[str, tuple[str, ...]] = {
+    "diabetes": ("type_2_diabetes", "type_1_diabetes"),
+    "diabetic": ("type_2_diabetes", "type_1_diabetes"),
+    "type 2 diabetic": ("type_2_diabetes",),
+    "type 1 diabetic": ("type_1_diabetes",),
+    "t2dm": ("type_2_diabetes",),
+    "hypertensive": ("hypertension",),
+    "ckd": ("chronic_kidney_disease",),
+    "heart attack": ("myocardial_infarction",),
+    "obese": ("obesity",),
+}
+#: phrase -> terminology tag whose medications it names.
+_DRUG_GROUP_ALIASES: dict[str, str] = {
+    "antihypertensive": "antihypertensive",
+    "blood pressure medication": "antihypertensive",
+    "diabetes medication": "diabetes_medication",
+    "glucose lowering medication": "diabetes_medication",
+    "antidiabetic": "diabetes_medication",
+    "lipid lowering medication": "lipid_lowering",
+    "glp1 receptor agonist": "glp1_agonist",
+    "angiotensin receptor blocker": "arb",
+}
+_LAB_ALIASES: dict[str, tuple[str, ...]] = {
+    "ldl": ("ldl_cholesterol",),
+    "bad cholesterol": ("ldl_cholesterol",),
+    "hdl": ("hdl_cholesterol",),
+    "cholesterol": ("total_cholesterol",),
+    "a1c": ("hba1c",),
+    "gfr": ("egfr",),
+    "blood sugar": ("glucose",),
+}
+#: Measurements the parsed rules cannot filter on. Naming one makes them decline.
+_OTHER_MEASURES: tuple[str, ...] = (
+    "blood pressure",
+    "bp",
+    "kidney function",
+    "renal function",
+    "risk",
+)
+
+
+def _build_vocabulary() -> tuple[_Term, ...]:
+    terms: dict[str, _Term] = {}
+
+    def add(phrase: str, kind: str, keys: Sequence[str]) -> None:
+        terms.setdefault(phrase, _term(phrase, kind, keys))
+
+    for concept in concepts_by_kind(ConceptKind.CONDITION):
+        for phrase in _names(concept.key, concept.display):
+            add(phrase, "condition", (concept.key,))
+    for phrase, keys in _CONDITION_ALIASES.items():
+        add(phrase, "condition", keys)
+
+    for concept in concepts_by_kind(ConceptKind.MEDICATION):
+        for phrase in _names(concept.key, concept.display):
+            add(phrase, "drug", (concept.key,))
+        if concept.drug_class:
+            add(concept.drug_class.replace("_", " "), "drug", _tagged(concept.drug_class))
+    for phrase, tag in _DRUG_GROUP_ALIASES.items():
+        add(phrase, "drug", _tagged(tag))
+
+    for concept in concepts_by_kind(ConceptKind.LAB):
+        for phrase in _names(concept.key, concept.display):
+            add(phrase, "lab", (concept.key,))
+    for phrase, keys in _LAB_ALIASES.items():
+        add(phrase, "lab", keys)
+
+    for kind in (ConceptKind.VITAL, ConceptKind.PANEL):
+        for concept in concepts_by_kind(kind):
+            for phrase in _names(concept.key, concept.display):
+                add(phrase, "measure", ())
+    for phrase in _OTHER_MEASURES:
+        add(phrase, "measure", ())
+
+    # Longest first: "diabetes medication" is a drug group, not the condition "diabetes",
+    # and "insulin glargine" is one drug, not the class "insulin" plus a stray word.
+    return tuple(sorted(terms.values(), key=lambda t: (-len(t.phrase), t.phrase)))
+
+
+_NEGATION = re.compile(r"\b(?:not|without|no|never|lack\w*)\b|n't\b")
+_FEMALE = re.compile(r"\b(?:female|females|women|woman)\b")
+_MALE = re.compile(r"\b(?:male|males|men|man)\b")
+_AGE_OLDER = re.compile(
+    r"\b(?:older than|over the age of|above the age of|aged over|aged above"
+    r"|(?:patients|adults|people|those) (?:over|above))\s+(\d{1,3})\b"
+)
+_AGE_AT_LEAST = re.compile(
+    r"\b(?:aged )?(\d{1,3}) (?:years? (?:old )?)?(?:or|and) (?:older|over|above)\b"
+)
+_AGE_YOUNGER = re.compile(
+    r"\b(?:younger than|under the age of|below the age of|aged under|aged below"
+    r"|(?:patients|adults|people|those) (?:under|below))\s+(\d{1,3})\b"
+)
+_EMERGENCY = re.compile(r"\b(?:emergency|er|a&e)\b")
+_INPATIENT = re.compile(r"\b(?:inpatient|admitted|admissions?|hospitali[sz](?:ed|ations?))\b")
+_WINDOW = re.compile(
+    r"\b(?:in|within|during|over) the (?:last|past|previous) "
+    r"(?:(\d{1,3}|one|two|three|six|twelve) )?(day|week|month|year)s?\b"
+)
+_NUMBER_WORDS = {"one": 1, "two": 2, "three": 3, "six": 6, "twelve": 12}
+_UNIT_DAYS = {"day": 1, "week": 7, "month": 30, "year": 365}
+_THRESHOLD = re.compile(
+    r"(>=|<=|>|<|\b(?:above|over|greater than|more than|higher than|exceeding|below|under"
+    r"|less than|lower than|at least|at most)\b)\s*(\d+(?:\.\d+)?)\s*([a-z%/\[\]0-9.]*)"
+)
+_THRESHOLD_COMPARATORS = {
+    ">": "gt",
+    "above": "gt",
+    "over": "gt",
+    "greater than": "gt",
+    "more than": "gt",
+    "higher than": "gt",
+    "exceeding": "gt",
+    ">=": "ge",
+    "at least": "ge",
+    "<": "lt",
+    "below": "lt",
+    "under": "lt",
+    "less than": "lt",
+    "lower than": "lt",
+    "<=": "le",
+    "at most": "le",
+}
+_HIGH = re.compile(r"\b(?:high|elevated|raised)\b")
+#: What "high <lab>" means when no number is given. Only labs with a conventional
+#: cut-off appear; "elevated HbA1c" keeps its own rule and its 7% reading.
+_HIGH_DEFAULTS: dict[str, tuple[str, float, str]] = {
+    "ldl_cholesterol": ("ge", 160.0, "the NCEP ATP III 'high' category starts at 160 mg/dL"),
+}
+_COMPARATOR_TEXT = {"gt": "above", "ge": "at or above", "lt": "below", "le": "at or below"}
+
+
+@dataclass(frozen=True)
+class _Age:
+    comparator: str  # birthdate comparator: lt (older than), le (N or older), gt (younger)
+    years: int
+    text: str
+
+
+@dataclass(frozen=True)
+class _Threshold:
+    concept: str
+    comparator: str
+    value: float
+    unit: str
+    note: str | None = None
+
+
+@dataclass(frozen=True)
+class _Facets:
+    """What the parser understood in a question, one field per kind of filter."""
+
+    conditions: tuple[str, ...] = ()
+    condition_phrases: tuple[str, ...] = ()
+    drugs: tuple[str, ...] = ()
+    drug_phrases: tuple[str, ...] = ()
+    labs: tuple[str, ...] = ()
+    other_measures: bool = False
+    negated: bool = False
+    age: _Age | None = None
+    gender: str | None = None
+    encounter_classes: tuple[str, ...] = ()
+    window_days: int | None = None
+    threshold: _Threshold | None = None
+    #: Several diagnoses or drugs joined by something other than a plain "or". One
+    #: search ORs its values, so "diabetes and hypertension" cannot be one step, and a
+    #: rule that silently answered "diabetes or hypertension" instead would be wrong.
+    ambiguous: bool = False
+
+    @property
+    def demographic(self) -> bool:
+        return self.age is not None or self.gender is not None
+
+
+_VOCABULARY: tuple[_Term, ...] = _build_vocabulary()
+
+
+_Hit = tuple[int, int, _Term]  # (start, end, term) within the normalised question
+#: What may separate two phrases of one kind for them to be read as alternatives.
+_DISJUNCTION = re.compile(r"^(?:,? or (?:an? |any )?|, )$")
+
+
+def _parse(question: str) -> _Facets:
+    text = _normalize(question)
+    hits: list[_Hit] = []
+    for term in _VOCABULARY:
+        for match in term.pattern.finditer(text):
+            if any(match.start() < end and start < match.end() for start, end, _ in hits):
+                continue
+            hits.append((match.start(), match.end(), term))
+    hits.sort(key=lambda hit: hit[0])
+
+    def of_kind(kind: str) -> list[_Hit]:
+        return [hit for hit in hits if hit[2].kind == kind]
+
+    def keys_and_phrases(kind: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        keys: list[str] = []
+        for _, _, term in of_kind(kind):
+            keys.extend(key for key in term.keys if key not in keys)
+        return tuple(keys), tuple(term.phrase for _, _, term in of_kind(kind))
+
+    def joined_by_or(kind: str) -> bool:
+        found = of_kind(kind)
+        return all(_DISJUNCTION.match(text[left[1] : right[0]]) for left, right in pairwise(found))
+
+    conditions, condition_phrases = keys_and_phrases("condition")
+    drugs, drug_phrases = keys_and_phrases("drug")
+    labs, _ = keys_and_phrases("lab")
+
+    classes: list[str] = []
+    if _EMERGENCY.search(text):
+        classes.append("EMER")
+    if _INPATIENT.search(text):
+        classes.append("IMP")
+
+    female, male = bool(_FEMALE.search(text)), bool(_MALE.search(text))
+    return _Facets(
+        conditions=conditions,
+        condition_phrases=condition_phrases,
+        drugs=drugs,
+        drug_phrases=drug_phrases,
+        labs=labs,
+        other_measures=bool(of_kind("measure")),
+        negated=bool(_NEGATION.search(text)),
+        age=_parse_age(text),
+        # "men and women" is no gender filter at all.
+        gender="female" if female and not male else "male" if male and not female else None,
+        encounter_classes=tuple(classes),
+        window_days=_parse_window(text),
+        threshold=_parse_threshold(text, of_kind("lab")),
+        ambiguous=not (joined_by_or("condition") and joined_by_or("drug")),
+    )
+
+
+def _parse_age(text: str) -> _Age | None:
+    for pattern, comparator, label in (
+        (_AGE_AT_LEAST, "le", "{n} or older"),
+        (_AGE_OLDER, "lt", "older than {n}"),
+        (_AGE_YOUNGER, "gt", "younger than {n}"),
+    ):
+        match = pattern.search(text)
+        if match:
+            years = int(match.group(1))
+            if 0 < years < 130:
+                return _Age(comparator, years, label.format(n=years))
+    return None
+
+
+def _parse_window(text: str) -> int | None:
+    match = _WINDOW.search(text)
+    if not match:
+        return None
+    count, unit = match.group(1), match.group(2)
+    number = 1 if count is None else _NUMBER_WORDS.get(count) or int(count)
+    return number * _UNIT_DAYS[unit]
+
+
+def _parse_threshold(text: str, labs: Sequence[_Hit]) -> _Threshold | None:
+    """A numeric cut-off for the one lab the question names, read after the lab's name."""
+    if len({key for _, _, term in labs for key in term.keys}) != 1:
+        return None
+    _, end, term = labs[0]
+    concept = require_concept(term.keys[0])
+    unit = concept.canonical_unit
+    if unit is None:
+        return None
+
+    match = _THRESHOLD.search(text, end)
+    if match is None:
+        default = _HIGH_DEFAULTS.get(concept.key)
+        if default is None or not _HIGH.search(text):
+            return None
+        comparator, value, note = default
+        return _Threshold(concept.key, comparator, value, unit, note)
+
+    comparator = _THRESHOLD_COMPARATORS[match.group(1)]
+    value = float(match.group(2))
+    stated = match.group(3)
+    # A trailing word is only a unit if it looks like one: "above 160 and" has none.
+    if stated and ("/" in stated or "%" in stated) and normalize_unit(stated) != unit:
+        try:
+            converted = round(convert_value(value, stated, unit, concept.key), 2)
+        except UnitConversionError:
+            return None  # a unit we cannot convert: decline rather than guess
+        note = f"{match.group(2)} {stated} was converted to {converted:g} {unit}"
+        return _Threshold(concept.key, comparator, converted, unit, note)
+    return _Threshold(concept.key, comparator, value, unit)
+
+
+# -- predicates: which combination of facets each parsed rule can express --------------
+
+
+def _expresses(f: _Facets, required: set[str], optional: frozenset[str] = frozenset()) -> bool:
+    """True when the question has every ``required`` facet and nothing outside the rule.
+
+    A facet the rule cannot turn into a search step makes it decline, so a question is
+    never answered with one of its criteria silently dropped.
+    """
+    present = {
+        name
+        for name, on in (
+            ("conditions", bool(f.conditions)),
+            ("drugs", bool(f.drugs)),
+            ("labs", bool(f.labs)),
+            ("other_measures", f.other_measures),
+            ("negated", f.negated),
+            ("demographic", f.demographic),
+            ("encounter", bool(f.encounter_classes)),
+            ("threshold", f.threshold is not None),
+            ("ambiguous", f.ambiguous),
+        )
+        if on
+    }
+    return required <= present and present <= required | optional
+
+
+def _is_condition_without_medication(question: str) -> bool:
+    return _expresses(_parse(question), {"conditions", "drugs", "negated"})
+
+
+def _is_encounter_question(question: str) -> bool:
+    return _expresses(_parse(question), {"encounter"}, frozenset({"conditions"}))
+
+
+def _is_demographic_question(question: str) -> bool:
+    return _expresses(_parse(question), {"conditions", "demographic"})
+
+
+def _is_medication_question(question: str) -> bool:
+    return _expresses(_parse(question), {"drugs"}, frozenset({"conditions"}))
+
+
+def _is_lab_threshold_question(question: str) -> bool:
+    return _expresses(_parse(question), {"labs", "threshold"}, frozenset({"conditions"}))
+
+
+def _is_diagnosis_question(question: str) -> bool:
+    return _expresses(_parse(question), {"conditions"})
+
+
+# -- builders for the parsed rules -------------------------------------------------------
+
+
+def _label(phrases: Sequence[str]) -> str:
+    return " or ".join(dict.fromkeys(phrases))
+
+
+def _condition_step(f: _Facets) -> dict[str, Any]:
+    return {
+        "step_id": "diagnosis",
+        "resource_type": "Condition",
+        "purpose": f"Patients with an active {_label(f.condition_phrases)} diagnosis.",
+        "params": [
+            _concept("code", f.conditions),
+            {"name": "clinical-status", "values": ["active"]},
+        ],
+        "count": 200,
+    }
+
+
+def _condition_assumptions(f: _Facets) -> list[str]:
+    if not f.conditions:
+        return []
+    displays = ", ".join(require_concept(key).display for key in f.conditions)
+    return [
+        f"'{_label(f.condition_phrases)}' was read as an active problem-list diagnosis of "
+        f"{displays}, searched in every coding system (SNOMED CT and ICD-10-CM).",
+    ]
+
+
+def _medication_step(f: _Facets, *, exclude: bool, depends_on: str | None) -> dict[str, Any]:
+    step: dict[str, Any] = {
+        "step_id": "medication_to_exclude" if exclude else "medication",
+        "resource_type": "MedicationRequest",
+        "purpose": f"Active {_label(f.drug_phrases)} orders.",
+        "params": [
+            _token("code", f.drugs, RXNORM),
+            {"name": "status", "values": ["active"]},
+        ],
+        "count": 200,
+    }
+    if exclude:
+        step["role"] = "exclude"
+    if depends_on:
+        step["depends_on"] = depends_on
+    return step
+
+
+def _drug_assumptions(f: _Facets) -> list[str]:
+    displays = ", ".join(require_concept(key).display for key in f.drugs)
+    return [
+        f"'{_label(f.drug_phrases)}' was read as an active order for: {displays}.",
+        "Stopped, completed or cancelled orders do not count as being on a medication.",
+    ]
+
+
+def _cohort_plan(
+    question: str,
+    rationale: str,
+    steps: list[dict[str, Any]],
+    assumptions: list[str],
+    analysis: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "question": question,
+        "intent": "cohort_search",
+        "rationale": rationale,
+        "cohort_logic": "all",
+        "steps": steps,
+        "analysis": analysis
+        or {"type": "cohort_identification", "concepts": [], "lookback_days": None},
+        "assumptions": assumptions,
+        "unsupported": False,
+        "unsupported_reason": None,
+    }
+
+
+def _condition_without_medication(question: str, today: datetime) -> dict[str, Any]:
+    del today
+    f = _parse(question)
+    return _cohort_plan(
+        question,
+        (
+            "Retrieve the diagnosed cohort, then remove everyone with an active order in the "
+            "named drug group; FHIR search cannot express 'has no resource of this kind'."
+        ),
+        [_condition_step(f), _medication_step(f, exclude=True, depends_on="diagnosis")],
+        [
+            *_condition_assumptions(f),
+            *_drug_assumptions(f),
+            "Negation is resolved after retrieval: FHIR search has no 'absent resource' filter.",
+        ],
+    )
+
+
+def _active_medication(question: str, today: datetime) -> dict[str, Any]:
+    del today
+    f = _parse(question)
+    steps: list[dict[str, Any]] = []
+    if f.conditions:
+        steps.append(_condition_step(f))
+    steps.append(_medication_step(f, exclude=False, depends_on="diagnosis" if steps else None))
+    return _cohort_plan(
+        question,
+        "Select patients by an active order for the named drug or drug class"
+        + (", within the diagnosed cohort." if f.conditions else "."),
+        steps,
+        [*_condition_assumptions(f), *_drug_assumptions(f)],
+    )
+
+
+def _diagnosis(question: str, today: datetime) -> dict[str, Any]:
+    del today
+    f = _parse(question)
+    return _cohort_plan(
+        question,
+        "Select patients by an active diagnosis on the problem list.",
+        [_condition_step(f)],
+        _condition_assumptions(f),
+    )
+
+
+def _years_before(today: datetime, years: int) -> str:
+    """The calendar date ``years`` years before today; 29 February falls back a day."""
+    day = today.date()
+    try:
+        return day.replace(year=day.year - years).isoformat()
+    except ValueError:
+        return day.replace(year=day.year - years, day=28).isoformat()
+
+
+def _condition_with_demographics(question: str, today: datetime) -> dict[str, Any]:
+    f = _parse(question)
+    params: list[dict[str, Any]] = []
+    described: list[str] = []
+    assumptions = _condition_assumptions(f)
+    if f.age is not None:
+        cutoff = _years_before(today, f.age.years)
+        params.append({"name": "birthdate", "values": [cutoff], "comparator": f.age.comparator})
+        described.append(f"aged {f.age.text}")
+        reading = {
+            "lt": f"born before {cutoff}, i.e. more than {f.age.years} years old today",
+            "le": f"born on or before {cutoff}, i.e. at least {f.age.years} years old today",
+            "gt": f"born after {cutoff}, i.e. less than {f.age.years} years old today",
+        }[f.age.comparator]
+        assumptions.append(
+            f"'{f.age.text}' was read as {reading}. A birth date recorded to the year only "
+            "matches if any day in that year would qualify."
+        )
+    if f.gender is not None:
+        params.append({"name": "gender", "values": [f.gender]})
+        described.append(f.gender)
+        assumptions.append(
+            f"'{f.gender}' was read as administrative gender; patients recorded as 'unknown' "
+            "or 'other' are not included."
+        )
+    return _cohort_plan(
+        question,
+        "Select the diagnosed cohort, then keep the patients whose demographics match.",
+        [
+            _condition_step(f),
+            {
+                "step_id": "demographics",
+                "resource_type": "Patient",
+                "purpose": f"Patients in that cohort who are {' and '.join(described)}.",
+                "depends_on": "diagnosis",
+                "params": params,
+                "count": 200,
+            },
+        ],
+        assumptions,
+    )
+
+
+_ENCOUNTER_LABELS = {"EMER": "emergency", "IMP": "inpatient"}
+#: Statuses of an encounter that actually took place. Planned, cancelled and
+#: entered-in-error encounters are not visits.
+TOOK_PLACE: tuple[str, ...] = ("arrived", "triaged", "in-progress", "onleave", "finished")
+
+
+def _encounter_class(question: str, today: datetime) -> dict[str, Any]:
+    f = _parse(question)
+    days = f.window_days or 365
+    kinds = " or ".join(_ENCOUNTER_LABELS[c] for c in f.encounter_classes)
+    steps: list[dict[str, Any]] = []
+    if f.conditions:
+        steps.append(_condition_step(f))
+    encounter: dict[str, Any] = {
+        "step_id": "encounters",
+        "resource_type": "Encounter",
+        "purpose": f"{kinds.capitalize()} encounters in the last {days} days.",
+        "params": [
+            _token("class", f.encounter_classes, ENCOUNTER_CLASS),
+            {"name": "date", "values": [_date(today, days)], "comparator": "ge"},
+            {"name": "status", "values": list(TOOK_PLACE)},
+        ],
+        "sort": "-date",
+        "count": 200,
+    }
+    if steps:
+        encounter["depends_on"] = "diagnosis"
+    steps.append(encounter)
+    window = (
+        f"The window was read as the last {days} days"
+        if f.window_days
+        else "No time window was given, so the last 365 days were used"
+    )
+    return _cohort_plan(
+        question,
+        f"Select patients with a {kinds} encounter (FHIR Encounter.class) in the window"
+        + (", within the diagnosed cohort." if f.conditions else "."),
+        steps,
+        [
+            *_condition_assumptions(f),
+            f"'{kinds}' was read as Encounter.class "
+            + " or ".join(f.encounter_classes)
+            + "; an encounter counts if any part of it falls in the window.",
+            f"{window} (a month is 30 days, a year 365).",
+            "Planned, cancelled and entered-in-error encounters are not counted as visits.",
+        ],
+    )
+
+
+def _lab_threshold(question: str, today: datetime) -> dict[str, Any]:
+    f = _parse(question)
+    threshold = f.threshold
+    assert threshold is not None  # guaranteed by the rule's predicate
+    concept = require_concept(threshold.concept)
+    relation = _COMPARATOR_TEXT[threshold.comparator]
+    value = f"{threshold.value:g}"
+    steps: list[dict[str, Any]] = []
+    if f.conditions:
+        steps.append(_condition_step(f))
+    results: dict[str, Any] = {
+        "step_id": "lab_results",
+        "resource_type": "Observation",
+        "purpose": f"{concept.display} results {relation} {value} {threshold.unit} "
+        "in the last year.",
+        "params": [
+            _token("code", [concept.key], LOINC),
+            {
+                "name": "value-quantity",
+                "values": [value],
+                "comparator": threshold.comparator,
+                "unit": threshold.unit,
+            },
+            {"name": "date", "values": [_date(today, 365)], "comparator": "ge"},
+        ],
+        "sort": "-date",
+        "count": 200,
+    }
+    if steps:
+        results["depends_on"] = "diagnosis"
+    steps.append(results)
+    return _cohort_plan(
+        question,
+        f"Select patients with a {concept.display} result {relation} the stated threshold"
+        + (", within the diagnosed cohort." if f.conditions else "."),
+        steps,
+        [
+            *_condition_assumptions(f),
+            f"The threshold was read as {concept.display} {relation} {value} {threshold.unit}"
+            + (f" ({threshold.note})." if threshold.note else "."),
+            "Any qualifying result in the last 365 days counts, not only the latest one.",
+            f"The search compares values recorded in {threshold.unit}; a server without UCUM "
+            "canonicalisation does not see results reported in another unit.",
+        ],
+        analysis={"type": "abnormal_labs", "concepts": [concept.key], "lookback_days": 365},
+    )
+
+
 def _unsupported(question: str) -> dict[str, Any]:
     return {
         "question": question,
@@ -527,7 +1193,10 @@ def _unsupported(question: str) -> dict[str, Any]:
     }
 
 
-# Order matters: the most specific rule must be tried first.
+# Order matters: the most specific rule must be tried first. The fixed rules that name one
+# question come before the parsed rules that compose a plan from what they read, and the
+# single-concept fallbacks ("kidney", "potassium", "HbA1c") come last so that a question
+# naming a diagnosis or a threshold is not swallowed by a keyword.
 RULES: tuple[Rule, ...] = (
     Rule(
         "hba1c_with_medication_change",
@@ -544,6 +1213,12 @@ RULES: tuple[Rule, ...] = (
         _diabetes_no_statin,
     ),
     Rule(
+        "condition_without_medication",
+        (),
+        _condition_without_medication,
+        _is_condition_without_medication,
+    ),
+    Rule(
         "high_risk_diabetes",
         (("diabet",), ("risk", "deteriorat", "stratif", "prioriti")),
         _high_risk_cohort,
@@ -557,6 +1232,21 @@ RULES: tuple[Rule, ...] = (
         _uncontrolled_hypertension,
     ),
     Rule(
+        "patient_summary",
+        (("summar", "overview", "profile", "record of"), ("patient",)),
+        _patient_summary,
+    ),
+    Rule("encounter_class", (), _encounter_class, _is_encounter_question),
+    Rule(
+        "condition_with_demographics",
+        (),
+        _condition_with_demographics,
+        _is_demographic_question,
+    ),
+    Rule("active_medication", (), _active_medication, _is_medication_question),
+    Rule("lab_threshold", (), _lab_threshold, _is_lab_threshold_question),
+    Rule("diagnosis", (), _diagnosis, _is_diagnosis_question),
+    Rule(
         "reduced_kidney_function",
         (("kidney", "renal", "egfr", "ckd", "nephropathy"),),
         _ckd_cohort,
@@ -565,11 +1255,6 @@ RULES: tuple[Rule, ...] = (
         "abnormal_potassium",
         (("potassium", "kalemia", "electrolyte"),),
         _abnormal_potassium,
-    ),
-    Rule(
-        "patient_summary",
-        (("summar", "overview", "profile", "record of"), ("patient",)),
-        _patient_summary,
     ),
     Rule(
         "elevated_hba1c",

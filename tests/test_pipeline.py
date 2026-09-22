@@ -9,11 +9,14 @@ from fhir_healthcare_ai.benchmark.cases import (
     Population,
     abnormal_potassium,
     diabetes_without_statin,
+    diabetic_cohort,
+    diabetic_older_than_65,
     elevated_hba1c,
     elevated_hba1c_recent_med_change,
 )
 from fhir_healthcare_ai.config import Settings
 from fhir_healthcare_ai.fhir.client import FHIRClient
+from fhir_healthcare_ai.fhir.memory import InMemoryFHIRServer
 from fhir_healthcare_ai.llm.mock import MockLLMProvider
 from fhir_healthcare_ai.logging_config import correlation_id_var
 from fhir_healthcare_ai.pipeline.orchestrator import PatientNotFoundError, PipelineOrchestrator
@@ -48,6 +51,16 @@ async def test_negation_excludes_patients_on_an_active_statin(
 ) -> None:
     cohort = await _cohort(orchestrator, "Which diabetic patients are not on a statin?")
     assert cohort == diabetes_without_statin(population)
+
+
+async def test_demographic_filter_reads_only_the_parent_cohort(
+    orchestrator: PipelineOrchestrator, server: InMemoryFHIRServer, population: Population
+) -> None:
+    cohort = await _cohort(orchestrator, "Which diabetic patients are older than 65?")
+    assert cohort == diabetic_older_than_65(population)
+    assert cohort < diabetic_cohort(population)
+    patient_reads = [r for r in server.requests if r.startswith("GET Patient?")]
+    assert patient_reads and all("_id=" in r for r in patient_reads)
 
 
 async def test_abnormal_screening_uses_reference_intervals(

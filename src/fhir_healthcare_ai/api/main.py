@@ -72,6 +72,14 @@ EXAMPLE_QUESTIONS: tuple[str, ...] = (
     "Which patients have uncontrolled blood pressure?",
     "Which patients have reduced kidney function?",
     "Which patients had abnormal potassium results?",
+    "Which patients are on an SGLT2 inhibitor?",
+    "Which diabetic patients are on insulin?",
+    "Which patients have chronic kidney disease?",
+    "Which diabetic patients are older than 65?",
+    "Which patients have LDL above 160?",
+    "Which patients had an emergency visit in the last year?",
+    "Which patients with heart failure were admitted in the last 6 months?",
+    "Which hypertensive patients are not on any antihypertensive?",
     "Summarize the record of patient syn42-pat-0001",
 )
 

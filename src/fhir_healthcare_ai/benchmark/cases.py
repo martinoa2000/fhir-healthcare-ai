@@ -22,6 +22,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any, Literal
 
 from fhir_healthcare_ai.terminology import (
+    ENCOUNTER_CLASS,
     UnitConversionError,
     concepts_with_tag,
     convert_value,
@@ -175,6 +176,75 @@ def _with_medication(
     return found
 
 
+def _birth_bounds(value: str | None) -> tuple[date, date] | None:
+    """The first and last day a possibly partial birth date could denote.
+
+    A registry feed that records only ``1958`` says the patient was born some day that
+    year; whether they are "older than 65" is then answered by whether any such day
+    qualifies, which is the reading FHIR date-range search applies too.
+    """
+    if not value:
+        return None
+    try:
+        if len(value) == 4:
+            return date(int(value), 1, 1), date(int(value), 12, 31)
+        if len(value) == 7:
+            year, month = int(value[:4]), int(value[5:7])
+            last = date(year + month // 12, month % 12 + 1, 1) - timedelta(days=1)
+            return date(year, month, 1), last
+        day = date.fromisoformat(value[:10])
+    except ValueError:
+        return None
+    return day, day
+
+
+def _years_ago(as_of: datetime, years: int) -> date:
+    day = as_of.date()
+    try:
+        return day.replace(year=day.year - years)
+    except ValueError:  # 29 February in a non-leap year
+        return day.replace(year=day.year - years, day=28)
+
+
+def _older_than(population: Population, years: int) -> set[str]:
+    """Patients who have lived more than ``years`` years: born before that anniversary."""
+    cutoff = _years_ago(population.as_of, years)
+    return {
+        pid
+        for pid, patient in population.patients.items()
+        if (bounds := _birth_bounds(patient.get("birthDate"))) and bounds[0] < cutoff
+    }
+
+
+def _with_gender(population: Population, gender: str) -> set[str]:
+    return {pid for pid, p in population.patients.items() if p.get("gender") == gender}
+
+
+#: Encounter statuses of a visit that actually happened.
+_ENCOUNTER_TOOK_PLACE = frozenset({"arrived", "triaged", "in-progress", "onleave", "finished"})
+
+
+def _with_encounter(population: Population, class_code: str, days: int) -> set[str]:
+    """Patients with an encounter of the given class overlapping the last ``days`` days."""
+    window_start = population.since(days)
+    found: set[str] = set()
+    for resource in population.by_type["Encounter"]:
+        pid = _patient_of(resource)
+        encounter_class = resource.get("class") or {}
+        if pid is None or (encounter_class.get("system"), encounter_class.get("code")) != (
+            ENCOUNTER_CLASS,
+            class_code,
+        ):
+            continue
+        if resource.get("status") not in _ENCOUNTER_TOOK_PLACE:
+            continue
+        period = resource.get("period") or {}
+        last = _latest_instant(period.get("end") or period.get("start"))
+        if last is not None and last >= window_start:
+            found.add(pid)
+    return found
+
+
 def _outside_reference(population: Population, concept_key: str, days: int) -> set[str]:
     concept = require_concept(concept_key)
     found: set[str] = set()
@@ -196,6 +266,8 @@ def _outside_reference(population: Population, concept_key: str, days: int) -> s
 DIABETES_DRUGS = tuple(c.key for c in concepts_with_tag("diabetes_medication"))
 STATINS = tuple(c.key for c in concepts_with_tag("statin"))
 ANTIHYPERTENSIVES = tuple(c.key for c in concepts_with_tag("antihypertensive"))
+SGLT2_INHIBITORS = tuple(c.key for c in concepts_with_tag("sglt2_inhibitor"))
+INSULINS = tuple(c.key for c in concepts_with_tag("insulin"))
 
 
 # -- oracles ------------------------------------------------------------------------
@@ -232,6 +304,54 @@ def reduced_kidney_function(population: Population) -> set[str]:
 
 def abnormal_potassium(population: Population) -> set[str]:
     return _outside_reference(population, "potassium", 180)
+
+
+def on_metformin(population: Population) -> set[str]:
+    return _with_medication(population, ("metformin",), active_only=True)
+
+
+def on_sglt2_inhibitor(population: Population) -> set[str]:
+    return _with_medication(population, SGLT2_INHIBITORS, active_only=True)
+
+
+def diabetic_on_insulin(population: Population) -> set[str]:
+    return diabetic_cohort(population) & _with_medication(population, INSULINS, active_only=True)
+
+
+def with_hypertension(population: Population) -> set[str]:
+    return _with_condition(population, "hypertension")
+
+
+def with_chronic_kidney_disease(population: Population) -> set[str]:
+    return _with_condition(population, "chronic_kidney_disease")
+
+
+def diabetic_older_than_65(population: Population) -> set[str]:
+    return diabetic_cohort(population) & _older_than(population, 65)
+
+
+def female_with_hypertension(population: Population) -> set[str]:
+    return with_hypertension(population) & _with_gender(population, "female")
+
+
+def ldl_above_160(population: Population) -> set[str]:
+    return {
+        pid for pid, value, _ in _observations(population, "ldl_cholesterol", 365) if value > 160
+    }
+
+
+def emergency_visit_last_year(population: Population) -> set[str]:
+    return _with_encounter(population, "EMER", 365)
+
+
+def heart_failure_admitted_recently(population: Population) -> set[str]:
+    admitted = _with_encounter(population, "IMP", 180)
+    return _with_condition(population, "heart_failure") & admitted
+
+
+def hypertension_untreated(population: Population) -> set[str]:
+    treated = _with_medication(population, ANTIHYPERTENSIVES, active_only=True)
+    return with_hypertension(population) - treated
 
 
 # -- cases --------------------------------------------------------------------------
@@ -305,6 +425,72 @@ CASES: tuple[BenchmarkCase, ...] = (
         "Which patients had abnormal potassium results?",
         oracle=abnormal_potassium,
         note="Potassium outside the reference interval in the last 6 months.",
+    ),
+    BenchmarkCase(
+        "on_metformin",
+        "Which patients are on metformin?",
+        oracle=on_metformin,
+        note="An active metformin order; stopped orders do not count.",
+    ),
+    BenchmarkCase(
+        "on_sglt2_inhibitor",
+        "Which patients are on an SGLT2 inhibitor?",
+        oracle=on_sglt2_inhibitor,
+        note="An active order for any drug the terminology tags sglt2_inhibitor.",
+    ),
+    BenchmarkCase(
+        "diabetic_on_insulin",
+        "Which diabetic patients are on insulin?",
+        oracle=diabetic_on_insulin,
+        note="Active type 1 or type 2 diabetes and an active insulin order.",
+    ),
+    BenchmarkCase(
+        "hypertension_diagnosis",
+        "Which patients have hypertension?",
+        oracle=with_hypertension,
+        note="An active hypertension problem, coded in SNOMED CT or ICD-10-CM.",
+    ),
+    BenchmarkCase(
+        "ckd_diagnosis",
+        "Which patients have chronic kidney disease?",
+        oracle=with_chronic_kidney_disease,
+        note="An active CKD problem, whatever the latest eGFR says.",
+    ),
+    BenchmarkCase(
+        "diabetic_older_than_65",
+        "Which diabetic patients are older than 65?",
+        oracle=diabetic_older_than_65,
+        note="Active diabetes and born before the 65th anniversary of the as-of date.",
+    ),
+    BenchmarkCase(
+        "female_hypertension",
+        "Which female patients have hypertension?",
+        oracle=female_with_hypertension,
+        note="Active hypertension and administrative gender 'female'.",
+    ),
+    BenchmarkCase(
+        "ldl_above_160",
+        "Which patients have LDL above 160?",
+        oracle=ldl_above_160,
+        note="Any LDL cholesterol result above 160 mg/dL in the last year.",
+    ),
+    BenchmarkCase(
+        "emergency_visit_last_year",
+        "Which patients had an emergency visit in the last year?",
+        oracle=emergency_visit_last_year,
+        note="An EMER-class encounter that took place in the last 365 days.",
+    ),
+    BenchmarkCase(
+        "heart_failure_admissions",
+        "Which patients with heart failure were admitted in the last 6 months?",
+        oracle=heart_failure_admitted_recently,
+        note="Active heart failure and an inpatient (IMP) encounter in the last 180 days.",
+    ),
+    BenchmarkCase(
+        "hypertension_untreated",
+        "Which hypertensive patients are not on any antihypertensive?",
+        oracle=hypertension_untreated,
+        note="Active hypertension without an active order tagged antihypertensive.",
     ),
     BenchmarkCase(
         "patient_summary",

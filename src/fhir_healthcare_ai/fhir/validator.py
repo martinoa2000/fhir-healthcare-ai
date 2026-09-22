@@ -43,8 +43,20 @@ _CONTROL_PARAMS = frozenset(
 )
 
 # A patient-scoped search with no selective filter would stream the whole resource type.
+# Encounter `class` is the Encounter counterpart of `category` (EMER, IMP, AMB): without it
+# "which patients had an emergency visit" is unanswerable, since an Encounter has no `code`.
 _SELECTIVE_PARAMS = frozenset(
-    {"_id", "patient", "subject", "encounter", "code", "combo-code", "category", "identifier"}
+    {
+        "_id",
+        "patient",
+        "subject",
+        "encounter",
+        "code",
+        "combo-code",
+        "category",
+        "class",
+        "identifier",
+    }
 )
 
 # `analysis.options` is a free-form dict in the schema, so it is allowlisted here like

@@ -129,8 +129,16 @@ ICD-10-CM from others.
   capped (`FHIR_MAX_*`, `MAX_PATIENTS_PER_RESPONSE`), and truncation is always reported
   in the response.
 - **Question text is data.** It goes into the user turn, never the system prompt.
+- **Authenticated.** With `API_KEYS` set, every route except the probes, `/` and the
+  OpenAPI docs needs `Authorization: Bearer <key>` or `X-API-Key: <key>` (401
+  otherwise). `ENVIRONMENT=prod` refuses to start without keys and cannot turn auth off.
+- **Rate limited.** `/query` and `/patient/{id}/analyze` allow
+  `API_RATE_LIMIT_PER_MINUTE` requests per caller (429 with `Retry-After` beyond it).
+  The count is per process: N workers or replicas allow N times as much, so use a
+  gateway for a hard global limit.
 - **Audited.** Every plan, refusal, FHIR search, analysis and response produces an
-  audit event (JSONL via `AUDIT_LOG_PATH`), joined by correlation id.
+  audit event (JSONL via `AUDIT_LOG_PATH`), joined by correlation id and attributed to
+  the caller's key *name* (`actor`; `anonymous` with auth off). Keys are never logged.
 - **Local by default.** The default backend is a self-hosted vLLM server. `/health`
   reports whether inference stays on the host (`llm.local`).
 
@@ -188,7 +196,10 @@ Everything is set through environment variables or `.env`. See
 | `LLM_FALLBACK_TO_MOCK` | `true` | Degrade to the rule-based planner when the backend is down |
 | `MAX_PATIENTS_PER_RESPONSE` | 100 | Display cap. Applied after screening, never before |
 | `AUDIT_LOG_PATH` | unset | Append-only JSONL audit trail |
-| `ENVIRONMENT` | `local` | `prod` disables `/audit` |
+| `ENVIRONMENT` | `local` | `prod` disables `/audit` and requires API keys |
+| `API_KEYS` | `{}` | JSON object of name -> key, e.g. `{"alice": "<secret>"}` |
+| `API_REQUIRE_AUTH` | on if keys are set | Always on in `prod` |
+| `API_RATE_LIMIT_PER_MINUTE` | 60 | Per caller, per process, on `/query` and `/patient/{id}/analyze`. 0 disables |
 
 ## Development
 

@@ -85,6 +85,29 @@ The deterministic planner (`LLM_PROVIDER=mock`) answers these question shapes:
 - Which patients had abnormal potassium results?
 - Summarize the record of patient `<id>`
 
+It also reads the variable parts of these shapes out of the question:
+
+| Shape | Examples |
+| --- | --- |
+| On a drug or drug class, optionally within a diagnosis | Which patients are on metformin? Which patients are on an SGLT2 inhibitor? Which diabetic patients are on insulin? |
+| Has a diagnosis | Which patients have hypertension? Which patients have chronic kidney disease? |
+| Diagnosis plus age and/or gender | Which diabetic patients are older than 65? Which female patients have hypertension? |
+| Lab result against a threshold | Which patients have LDL above 160? Which patients have high LDL cholesterol? |
+| Emergency or inpatient encounter in a window, optionally within a diagnosis | Which patients had an emergency visit in the last year? Which patients with heart failure were admitted in the last 6 months? |
+| Diagnosis without a drug group | Which hypertensive patients are not on any antihypertensive? |
+
+Drug names, drug classes (`sglt2 inhibitor`, `beta blocker`, `statin`), drug groups
+(`antihypertensive`, `diabetes medication`), diagnoses and labs are recognised from the
+terminology, so a concept added there is recognised without touching the planner. Every
+reading the planner makes (which drugs a class covers, what "older than 65" means as a
+birth date, what "high LDL" means without a number, how long "the last 6 months" is) is
+listed in the plan's `assumptions`.
+
+A question whose parts the planner cannot all turn into search steps is refused rather
+than half-answered: "patients on a statin with LDL above 100" names a drug *and* a lab
+threshold, which no single rule expresses, and "patients with diabetes and hypertension"
+needs two diagnosis steps, which one search's OR of codes cannot express.
+
 For anything else it returns `unsupported: true` with a reason instead of guessing.
 Open-ended questions need a real model (`vllm`, `huggingface`, or a hosted provider).
 
@@ -100,9 +123,11 @@ it runs only for the patients an earlier step found. Each step has a **role**:
 | `exclude` | Removes every patient the step returns | "...*not* on a statin". FHIR search cannot filter for an absent resource |
 
 `cohort_logic` combines the filter steps as an intersection (`all`) or a union
-(`any`). The analysis option `require_abnormal` keeps only patients with a result
-outside the sex-specific reference interval. This is how "abnormal potassium" is
-answered: a single `value-quantity` threshold cannot express it.
+(`any`). A dependent `Patient` step filters on demographics ("...*older than 65*"): it
+runs as `Patient?birthdate=lt...&_id=<the parent cohort>`, so only the cohort's own
+demographics are read. The analysis option `require_abnormal` keeps only patients with
+a result outside the sex-specific reference interval. This is how "abnormal potassium"
+is answered: a single `value-quantity` threshold cannot express it.
 
 Concepts are named by key (`hba1c`, `type_2_diabetes`, `metformin`) and expanded into
 codes by the terminology layer, so the model never writes a LOINC or SNOMED code
@@ -155,6 +180,17 @@ high_risk_diabetes           PASS      52    52  1.000  1.000  1.000
 uncontrolled_hypertension    PASS      36    36  1.000  1.000  1.000
 reduced_kidney_function      PASS      24    24  1.000  1.000  1.000
 abnormal_potassium           PASS       6     6  1.000  1.000  1.000
+on_metformin                 PASS      38    38  1.000  1.000  1.000
+on_sglt2_inhibitor           PASS       7     7  1.000  1.000  1.000
+diabetic_on_insulin          PASS      18    18  1.000  1.000  1.000
+hypertension_diagnosis       PASS      68    68  1.000  1.000  1.000
+ckd_diagnosis                PASS      19    19  1.000  1.000  1.000
+diabetic_older_than_65       PASS      28    28  1.000  1.000  1.000
+female_hypertension          PASS      43    43  1.000  1.000  1.000
+ldl_above_160                PASS       5     5  1.000  1.000  1.000
+emergency_visit_last_year    PASS      11    11  1.000  1.000  1.000
+heart_failure_admissions     PASS      10    10  1.000  1.000  1.000
+hypertension_untreated       PASS      22    22  1.000  1.000  1.000
 patient_summary              PASS       1     1  1.000  1.000  1.000
 unsupported_weather          PASS                             refused
 unsupported_billing          PASS                             refused
@@ -228,3 +264,17 @@ src/fhir_healthcare_ai/
   currently show the gap.
 - The risk model is a transparent demonstration score, not a validated clinical model.
   The benchmark scores the high-risk cohort's membership, not its ranking.
+- The same applies to lab thresholds read from a question ("LDL above 160"): the search
+  compares in the concept's canonical unit. A threshold stated in another unit
+  ("above 4.1 mmol/L") is converted before the search, but a *result* stored in another
+  unit is still invisible to it. The seed-42 LDL results are all in mg/dL.
+- An encounter counts for "in the last N months" if any part of it falls in the window
+  (`date=ge`), and a month is read as 30 days. "The last year" means the last 365 days,
+  not the previous calendar year.
+- A birth date recorded to the year only is matched the way FHIR date search matches
+  ranges: a patient born "1961" counts as older than 65 on 2026-06-01, because some day
+  in 1961 qualifies. The benchmark oracle applies the same reading.
+- The deterministic planner's older keyword rules still fire on one word. "Which diabetic
+  patients 65 or older have diabetic nephropathy?" names two diagnoses and an age, which
+  the parsed rules decline, and it then falls through to the `nephropathy` keyword of the
+  reduced-kidney-function rule rather than to a refusal.

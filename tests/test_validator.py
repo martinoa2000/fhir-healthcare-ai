@@ -7,8 +7,9 @@ import pytest
 from fhir_healthcare_ai.domain.enums import ResourceType, StepRole
 from fhir_healthcare_ai.domain.query import AnalysisRequest, QueryPlan, QueryStep, SearchParam
 from fhir_healthcare_ai.fhir.concepts import ConceptExpander
+from fhir_healthcare_ai.fhir.query_builder import FHIRQueryBuilder
 from fhir_healthcare_ai.fhir.validator import QueryValidator
-from fhir_healthcare_ai.terminology import ICD10, LOINC, SNOMED
+from fhir_healthcare_ai.terminology import ENCOUNTER_CLASS, ICD10, LOINC, SNOMED
 
 
 def _codes(result: object) -> set[str]:
@@ -59,6 +60,31 @@ def test_refuses_injection_shaped_values(validator: QueryValidator, value: str) 
 def test_refuses_an_unselective_scan(validator: QueryValidator) -> None:
     step = _step(params=[SearchParam(name="status", values=["final"])])
     assert not validator.validate_step(step).ok
+
+
+def test_encounter_class_is_a_selective_filter(validator: QueryValidator) -> None:
+    step = _step(
+        resource_type=ResourceType.ENCOUNTER,
+        params=[SearchParam(name="class", values=["EMER"], system=ENCOUNTER_CLASS)],
+    )
+    assert validator.validate_step(step).ok
+
+
+def test_dependent_patient_step_is_scoped_by_id() -> None:
+    """A Patient step used to ignore its parent's cohort and fetch every match."""
+    step = _step(
+        step_id="older",
+        resource_type=ResourceType.PATIENT,
+        params=[SearchParam(name="birthdate", values=["1961-01-01"], comparator="lt")],
+        depends_on="diagnosis",
+    )
+    queries = FHIRQueryBuilder().build_step(step, patient_ids=[f"p{i:03d}" for i in range(60)])
+    assert len(queries) == 2  # chunked like any other scoped step
+    for query in queries:
+        params = dict(query.params)
+        assert params["birthdate"] == "lt1961-01-01"
+        assert params["_id"].startswith("p0")
+        assert "patient" not in params
 
 
 def test_multi_system_values_from_the_expander_are_accepted(validator: QueryValidator) -> None:

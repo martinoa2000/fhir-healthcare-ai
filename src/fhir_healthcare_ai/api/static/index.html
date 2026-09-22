@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>fhir-healthcare-ai</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/ui/app.css">
+  <script src="/ui/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <strong>fhir-healthcare-ai</strong>
+      <span class="muted">governed questions over HL7 FHIR R4</span>
+    </div>
+    <div id="health" class="health" aria-live="polite">
+      <span class="badge">checking status…</span>
+    </div>
+  </header>
+
+  <p class="disclaimer" id="banner-disclaimer">
+    Research and engineering demonstration only. Synthetic data. Not for clinical use.
+  </p>
+
+  <main>
+    <section class="panel" aria-labelledby="query-title">
+      <h2 id="query-title">Ask a question</h2>
+      <form id="query-form" autocomplete="off">
+        <label for="question">Question</label>
+        <textarea id="question" name="question" rows="3" minlength="3" maxlength="1000"
+                  required placeholder="Which diabetic patients are not on a statin?"></textarea>
+        <div id="examples" class="chips" aria-label="Example questions"></div>
+        <div class="row">
+          <label class="inline">As of
+            <input type="date" id="as-of" name="as_of">
+          </label>
+          <label class="inline check">
+            <input type="checkbox" id="narrate" name="narrate" checked> Narrative
+          </label>
+          <button type="submit" id="query-submit">Ask</button>
+        </div>
+      </form>
+      <div id="query-result" class="result" aria-live="polite"></div>
+    </section>
+
+    <section class="panel" aria-labelledby="patient-title">
+      <h2 id="patient-title">Analyse a patient</h2>
+      <form id="patient-form" autocomplete="off">
+        <div class="row">
+          <label class="inline grow">Patient id
+            <input type="text" id="patient-id" name="patient_id" required maxlength="64"
+                   pattern="[A-Za-z0-9\-.]{1,64}" placeholder="syn42-pat-0001">
+          </label>
+          <label class="inline">As of
+            <input type="date" id="patient-as-of" name="as_of">
+          </label>
+          <button type="submit" id="patient-submit">Analyse</button>
+        </div>
+      </form>
+      <div id="patient-result" class="result" aria-live="polite"></div>
+    </section>
+  </main>
+
+  <footer class="muted">
+    <a href="/docs">OpenAPI docs</a> · <a href="/capabilities">capabilities</a> ·
+    <a href="/health">health</a>
+  </footer>
+</body>
+</html>

@@ -35,7 +35,9 @@ make install        # pip install -e ".[dev]"
 make demo           # API on http://127.0.0.1:8000 over 120 in-memory synthetic patients
 ```
 
-Open <http://127.0.0.1:8000/docs>, or:
+Open <http://127.0.0.1:8000/> for the built-in web UI (example questions, evidence per
+patient, single-patient analysis, and the planner's health and fallback status), or
+<http://127.0.0.1:8000/docs> for the OpenAPI UI, or:
 
 ```bash
 curl -s localhost:8000/query -H 'content-type: application/json' \
@@ -51,6 +53,7 @@ docker compose --profile vllm up --build   # adds a local vLLM server (NVIDIA GP
 
 | URL | What |
 | --- | --- |
+| <http://localhost:8000/> | Web UI |
 | <http://localhost:8000/docs> | API (OpenAPI UI) |
 | <http://localhost:8080/> | HAPI FHIR test page |
 
@@ -71,6 +74,7 @@ never silent.
 | `GET` | `/health` | FHIR reachability, active vs. configured LLM backend, fallback status |
 | `GET` | `/health/live`, `/health/ready` | Liveness (never touches FHIR) and readiness probes |
 | `GET` | `/audit` | Recent audit events, filterable by `correlation_id`. Returns 404 when `ENVIRONMENT=prod` |
+| `GET` | `/`, `/ui/*` | Web UI: static HTML/CSS/JS shipped in the package, no build step, no CDN. It only calls the routes above |
 
 Every response carries an `X-Request-ID`. A well-formed one supplied by the caller is
 reused; anything else is replaced. The same id appears in every log line and audit
@@ -204,7 +208,7 @@ in tests too.
 
 ```
 src/fhir_healthcare_ai/
-  api/            FastAPI app: routes, request ids, health, error mapping
+  api/            FastAPI app: routes, request ids, health, error mapping; web UI (static/)
   pipeline/       planner, orchestrator (the fixed workflow), response generator
   llm/            provider interface; vllm, huggingface, mock, openai, anthropic; prompts
   fhir/           allowlist, validator, concept expander, query builder, client, parsers,

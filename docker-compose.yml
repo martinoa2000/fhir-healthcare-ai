@@ -1,0 +1,209 @@
+# Local development stack: HAPI FHIR R4 server + synthetic data + the API.
+#
+#   docker compose up --build      -> boots HAPI, seeds 120 patients, starts the API
+#   open http://localhost:8000/docs   (API, interactive OpenAPI UI)
+#   open http://localhost:8080/       (HAPI's own FHIR test page)
+#
+# Requires Compose v2.24+ (for `env_file: required: false`).
+# No `version:` key - it is obsolete and ignored in Compose v2.
+
+name: fhir-healthcare-ai
+
+services:
+  # ---------------------------------------------------------------------
+  # One-shot: make the HAPI data volume writable.
+  #
+  # hapiproject/hapi is a distroless image running as a non-root uid, but a
+  # freshly created named volume is owned by root:root. Without this the H2
+  # database cannot be written and HAPI crash-loops on first start.
+  # ---------------------------------------------------------------------
+  fhir-init:
+    image: busybox:1.37
+    command: ["sh", "-c", "mkdir -p /data/hapi && chmod 0777 /data/hapi"]
+    volumes:
+      - hapi-data:/data/hapi
+    restart: "no"
+    networks:
+      - fhir-net
+
+  # ---------------------------------------------------------------------
+  # HAPI FHIR JPA server (R4), backed by an embedded H2 database.
+  #
+  # No `healthcheck:` here on purpose: the published hapiproject/hapi image is
+  # distroless - it has no shell, curl or wget - so any in-container probe would
+  # fail forever and `condition: service_healthy` would deadlock the whole stack.
+  # Readiness is instead established by the `seed` service, which polls
+  # /fhir/metadata via `--wait-for-server` before it writes anything. Expect
+  # 60-120s for HAPI to finish booting on a cold start.
+  # ---------------------------------------------------------------------
+  fhir:
+    image: hapiproject/hapi:v7.4.0
+    depends_on:
+      fhir-init:
+        condition: service_completed_successfully
+    environment:
+      # HAPI reads Spring properties straight from dotted env var names.
+      hapi.fhir.fhir_version: R4
+      hapi.fhir.allow_multiple_delete: "true"
+      hapi.fhir.allow_external_references: "true"
+      # Pin the H2 files onto the named volume so data survives `docker compose down`.
+      spring.datasource.url: "jdbc:h2:file:/data/hapi/h2;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE"
+      spring.datasource.username: sa
+      spring.datasource.password: ""
+      spring.datasource.driverClassName: org.h2.Driver
+      spring.jpa.properties.hibernate.dialect: ca.uhn.fhir.jpa.model.dialect.HapiFhirH2Dialect
+      JAVA_OPTS: "-Xmx2g"
+    ports:
+      - "8080:8080"
+    volumes:
+      - hapi-data:/data/hapi
+    restart: unless-stopped
+    networks:
+      - fhir-net
+
+  # ---------------------------------------------------------------------
+  # Synthetic data loader. Runs to completion and exits 0.
+  #
+  # Deliberately NOT behind a profile: the README promises a one-command start,
+  # and re-running is harmless - the seeder submits PUT-based transaction
+  # bundles with deterministic ids (--seed 42), so repeated runs upsert the same
+  # resources instead of duplicating them.
+  #
+  # This is the only component allowed to write to the FHIR server, hence the
+  # local FHIR_ALLOW_WRITE=true override.
+  # ---------------------------------------------------------------------
+  seed:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: fhir-healthcare-ai:local
+    depends_on:
+      fhir:
+        condition: service_started
+    command:
+      - fhir-ai-seed
+      - --push
+      - --wait-for-server
+      - --patients
+      - "120"
+      - --seed
+      - "42"
+      - --fhir-base-url
+      - http://fhir:8080/fhir
+      - --output
+      - /app/data/synthetic
+    environment:
+      FHIR_BASE_URL: http://fhir:8080/fhir
+      FHIR_ALLOW_WRITE: "true"
+      LOG_LEVEL: INFO
+      LOG_JSON: "false"
+    volumes:
+      - app-data:/app/data
+    restart: "no"
+    networks:
+      - fhir-net
+
+  # ---------------------------------------------------------------------
+  # Local inference server (vLLM), exposing an OpenAI-compatible API.
+  #
+  # Behind the `vllm` profile because it needs an NVIDIA GPU and pulls a
+  # multi-gigabyte image plus model weights. Without it the stack still boots
+  # and answers the documented questions using the deterministic planner:
+  #
+  #   docker compose up                    -> rule-based planner, no GPU
+  #   docker compose --profile vllm up     -> local LLM planner
+  #
+  # No hosted API is involved in either case. Question text never leaves the
+  # host unless the operator explicitly configures LLM_PROVIDER=openai/anthropic.
+  # ---------------------------------------------------------------------
+  vllm:
+    profiles: ["vllm"]
+    image: vllm/vllm-openai:v0.6.3
+    command:
+      - --model
+      - ${LLM_MODEL:-Qwen/Qwen2.5-7B-Instruct}
+      - --served-model-name
+      - ${LLM_MODEL:-Qwen/Qwen2.5-7B-Instruct}
+      - --max-model-len
+      - "16384"
+      - --port
+      - "8000"
+    environment:
+      # Optional: only needed for gated repositories on the Hub.
+      HUGGING_FACE_HUB_TOKEN: ${HUGGING_FACE_HUB_TOKEN:-}
+    volumes:
+      # Cache weights on the host so a restart does not re-download them.
+      - hf-cache:/root/.cache/huggingface
+    ports:
+      - "8001:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+    networks:
+      - fhir-net
+
+  # ---------------------------------------------------------------------
+  # The API itself. FastAPI's own /docs is the primary UI for this stack.
+  # ---------------------------------------------------------------------
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: fhir-healthcare-ai:local
+    depends_on:
+      # Waiting on the seeder (rather than on `fhir` directly) means the API only
+      # comes up once the server is both reachable and populated.
+      seed:
+        condition: service_completed_successfully
+    env_file:
+      # Optional: copy .env.example to .env to override any of the defaults below.
+      - path: .env
+        required: false
+    environment:
+      FHIR_BASE_URL: http://fhir:8080/fhir
+      # The query path is read-only by design; only `seed` ever flips this.
+      FHIR_ALLOW_WRITE: "false"
+      # Inference stays on this host. `vllm` points at the local server above; if that
+      # server is not running (no `--profile vllm`), the factory degrades to the
+      # deterministic planner and says so in /health rather than failing requests.
+      LLM_PROVIDER: ${LLM_PROVIDER:-vllm}
+      LLM_BASE_URL: ${LLM_BASE_URL:-http://vllm:8000/v1}
+      LLM_MODEL: ${LLM_MODEL:-Qwen/Qwen2.5-7B-Instruct}
+      LLM_FALLBACK_TO_MOCK: ${LLM_FALLBACK_TO_MOCK:-true}
+      ENVIRONMENT: local
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_JSON: ${LOG_JSON:-true}
+      AUDIT_LOG_PATH: /app/data/audit.jsonl
+    ports:
+      - "8000:8000"
+    volumes:
+      - app-data:/app/data
+    restart: unless-stopped
+    networks:
+      - fhir-net
+
+  # ---------------------------------------------------------------------
+  # No separate `ui` container.
+  #
+  # Both UIs this project needs already ship with services above: the API serves
+  # OpenAPI/Swagger at http://localhost:8000/docs, and hapiproject/hapi serves
+  # its own FHIR test page at http://localhost:8080/. Adding a third container
+  # to proxy pages that are already published would be dead weight.
+  # ---------------------------------------------------------------------
+
+volumes:
+  hapi-data:
+    driver: local
+  app-data:
+    driver: local
+  hf-cache:
+    driver: local
+
+networks:
+  fhir-net:
+    driver: bridge

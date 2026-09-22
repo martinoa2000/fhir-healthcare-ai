@@ -1,0 +1,61 @@
+# Keep the build context small and deterministic. Anything not needed to build
+# the wheel (pyproject.toml, README.md, src/) should be excluded here.
+
+# VCS and CI
+.git
+.gitignore
+.github
+.gitattributes
+
+# Local secrets and environment
+.env
+.env.*
+!.env.example
+
+# Python build/output artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+*.whl
+
+# Virtualenvs
+.venv/
+venv/
+env/
+
+# Tool caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.tox/
+.nox/
+
+# Generated data, synthetic bundles and audit logs
+data/
+*.jsonl
+
+# Tests and docs are not needed at image build time
+tests/
+docs/
+scripts/
+
+# Infra files (changing them must not bust the build cache)
+Dockerfile
+.dockerignore
+docker-compose.yml
+docker-compose.*.yml
+Makefile
+
+# Editors and OS cruft
+.idea/
+.vscode/
+*.swp
+.DS_Store

@@ -1,0 +1,70 @@
+# --- Secrets and local configuration -------------------------------------------------
+# .env holds the FHIR base URL, the LLM endpoint and any API key for the hosted
+# providers. It must never be committed; .env.example is the documented template.
+.env
+.env.*
+!.env.example
+
+# --- Generated clinical data ---------------------------------------------------------
+# The synthetic cohort is reproducible from a seed (`make seed`, `fhir-ai-seed`), so the
+# bundles are build output, not source. Committing them would also put thousands of
+# patient-shaped resources into the history, which is a bad habit to demonstrate in a
+# healthcare repository even when the patients are fake.
+data/
+*.ndjson
+synthetic-*.json
+
+# Audit trail and benchmark output (AUDIT_LOG_PATH, fhir-ai-bench).
+*.jsonl
+audit*.log
+benchmark-results/
+
+# --- Local model weights -------------------------------------------------------------
+# The HuggingFace provider caches multi-gigabyte checkpoints. Keep them out of the repo.
+models/
+.cache/
+*.safetensors
+*.gguf
+
+# --- Python --------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+dist/
+*.egg-info/
+.eggs/
+*.whl
+
+# Virtualenvs (uv creates .venv by default)
+.venv/
+venv/
+env/
+ENV/
+
+# --- Tooling caches and test output ---------------------------------------------------
+.pytest_cache/
+.mypy_cache/
+.dmypy.json
+.ruff_cache/
+.hypothesis/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.tox/
+.nox/
+
+# --- Editors and OS ------------------------------------------------------------------
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# --- Notebooks -----------------------------------------------------------------------
+# Notebooks are for exploration only; no business logic lives in them. Checkpoints are
+# pure noise.
+.ipynb_checkpoints/

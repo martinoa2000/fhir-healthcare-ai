@@ -26,6 +26,7 @@ from fastapi import FastAPI, HTTPException, Path, Query, Request, Response
 from fastapi.responses import JSONResponse
 
 from fhir_healthcare_ai import __version__
+from fhir_healthcare_ai.api import ui
 from fhir_healthcare_ai.api.schemas import (
     PATIENT_ID_PATTERN,
     CapabilitiesResponse,
@@ -138,6 +139,7 @@ def create_app(
     )
     app.middleware("http")(_correlation_middleware)
     _register_routes(app)
+    app.include_router(ui.router)
     return app
 
 

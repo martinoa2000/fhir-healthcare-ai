@@ -56,6 +56,21 @@ class CohortLogic(StrEnum):
     ANY = "any"  # union - patient must satisfy at least one step
 
 
+class StepRole(StrEnum):
+    """What a step's patient set means for the cohort.
+
+    ``FILTER`` is the default and is what ``depends_on`` expresses in the planning
+    prompt: "patients with X *and* Y". ``CONTEXT`` steps fetch data about patients
+    already selected (their recent labs, their diagnoses) and never narrow the cohort.
+    ``EXCLUDE`` steps remove every patient they return, which is how a plan says
+    "without": FHIR search has no filter for an absent resource.
+    """
+
+    FILTER = "filter"
+    CONTEXT = "context"
+    EXCLUDE = "exclude"
+
+
 class AnalysisType(StrEnum):
     """Mode 2 analytics tasks."""
 

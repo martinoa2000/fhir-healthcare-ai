@@ -17,7 +17,7 @@ Two classes of problem are distinguished, because they mean different things:
 
 from __future__ import annotations
 
-from fhir_healthcare_ai.domain.enums import ResourceType, Severity
+from fhir_healthcare_ai.domain.enums import ResourceType, Severity, StepRole
 from fhir_healthcare_ai.domain.query import QueryPlan, QueryStep, SearchParam, ValidationResult
 from fhir_healthcare_ai.fhir.allowlist import (
     CLINICAL_CODE_SYSTEMS,
@@ -46,6 +46,10 @@ _CONTROL_PARAMS = frozenset(
 _SELECTIVE_PARAMS = frozenset(
     {"_id", "patient", "subject", "encounter", "code", "combo-code", "category", "identifier"}
 )
+
+# `analysis.options` is a free-form dict in the schema, so it is allowlisted here like
+# everything else a model writes: key -> required value type.
+_ANALYSIS_OPTIONS: dict[str, type] = {"require_abnormal": bool}
 
 
 class QueryValidator:
@@ -96,6 +100,32 @@ class QueryValidator:
                 f"Plan has {len(plan.steps)} steps; the limit is {self.max_steps}.",
                 "plan.steps",
             )
+
+        if all(step.role is StepRole.EXCLUDE for step in plan.steps):
+            result.add(
+                Severity.ERROR,
+                "exclusion-only-plan",
+                "Every step excludes patients, so there is no cohort to exclude them from. "
+                "Add a filter step that selects the population first.",
+                "plan.steps",
+            )
+
+        for key, value in plan.analysis.options.items():
+            if key not in _ANALYSIS_OPTIONS:
+                result.add(
+                    Severity.ERROR,
+                    "unknown-analysis-option",
+                    f"Analysis option {key!r} is not supported; allowed: "
+                    f"{', '.join(sorted(_ANALYSIS_OPTIONS))}.",
+                    "plan.analysis.options",
+                )
+            elif not isinstance(value, _ANALYSIS_OPTIONS[key]):
+                result.add(
+                    Severity.ERROR,
+                    "invalid-analysis-option",
+                    f"Analysis option {key!r} must be a {_ANALYSIS_OPTIONS[key].__name__}.",
+                    "plan.analysis.options",
+                )
 
         for concept_ref in plan.analysis.concepts:
             if not concept_ref.replace("_", "").isalnum():

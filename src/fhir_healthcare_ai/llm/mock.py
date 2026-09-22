@@ -223,7 +223,7 @@ def _ckd_cohort(question: str, today: datetime) -> dict[str, Any]:
                         "name": "value-quantity",
                         "values": ["60"],
                         "comparator": "lt",
-                        "unit": "mL/min/{1.73_m2}",
+                        "unit": "mL/min/1.73m2",
                     },
                     {"name": "date", "values": [_date(today, 365)], "comparator": "ge"},
                 ],
@@ -232,6 +232,7 @@ def _ckd_cohort(question: str, today: datetime) -> dict[str, Any]:
             },
             {
                 "step_id": "ckd_diagnosis",
+                "role": "context",
                 "resource_type": "Condition",
                 "purpose": "An active chronic kidney disease problem for those patients.",
                 "depends_on": "low_egfr",
@@ -329,6 +330,7 @@ def _diabetes_no_statin(question: str, today: datetime) -> dict[str, Any]:
             },
             {
                 "step_id": "statin_orders",
+                "role": "exclude",
                 "resource_type": "MedicationRequest",
                 "purpose": "Statin orders for that cohort, used to exclude patients who have one.",
                 "depends_on": "diabetes",
@@ -340,7 +342,6 @@ def _diabetes_no_statin(question: str, today: datetime) -> dict[str, Any]:
             "type": "cohort_identification",
             "concepts": ["ldl_cholesterol"],
             "lookback_days": 365,
-            "options": {"exclude_step": "statin_orders"},
         },
         "assumptions": [
             "Negation is resolved after retrieval: FHIR search has no 'absent resource' filter.",
@@ -367,6 +368,7 @@ def _patient_summary(question: str, today: datetime) -> dict[str, Any]:
             },
             {
                 "step_id": "observations",
+                "role": "context",
                 "resource_type": "Observation",
                 "purpose": "Recent laboratory and vital sign results.",
                 "params": [
@@ -378,6 +380,7 @@ def _patient_summary(question: str, today: datetime) -> dict[str, Any]:
             },
             {
                 "step_id": "conditions",
+                "role": "context",
                 "resource_type": "Condition",
                 "purpose": "The active problem list.",
                 "params": [
@@ -388,6 +391,7 @@ def _patient_summary(question: str, today: datetime) -> dict[str, Any]:
             },
             {
                 "step_id": "medications",
+                "role": "context",
                 "resource_type": "MedicationRequest",
                 "purpose": "Current medication orders.",
                 "params": [{"name": "patient", "values": [patient_id]}],
@@ -423,6 +427,7 @@ def _high_risk_cohort(question: str, today: datetime) -> dict[str, Any]:
             },
             {
                 "step_id": "recent_results",
+                "role": "context",
                 "resource_type": "Observation",
                 "purpose": "Results the risk model consumes.",
                 "depends_on": "diabetes",
@@ -476,7 +481,12 @@ def _abnormal_potassium(question: str, today: datetime) -> dict[str, Any]:
                 "count": 200,
             }
         ],
-        "analysis": {"type": "abnormal_labs", "concepts": ["potassium"], "lookback_days": 180},
+        "analysis": {
+            "type": "abnormal_labs",
+            "concepts": ["potassium"],
+            "lookback_days": 180,
+            "options": {"require_abnormal": True},
+        },
         "assumptions": [
             "Abnormality is decided by the analytics layer against the reference interval, "
             "not by a value filter in the query.",

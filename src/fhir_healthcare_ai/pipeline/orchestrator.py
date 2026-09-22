@@ -34,7 +34,7 @@ from fhir_healthcare_ai.analytics.risk import RiskStratifier
 from fhir_healthcare_ai.audit import AuditEvent, AuditSink, LoggingAuditSink
 from fhir_healthcare_ai.config import Settings, get_settings
 from fhir_healthcare_ai.domain.clinical import PatientRecord
-from fhir_healthcare_ai.domain.enums import AnalysisType, QueryIntent, ResourceType
+from fhir_healthcare_ai.domain.enums import AnalysisType, QueryIntent, ResourceType, StepRole
 from fhir_healthcare_ai.domain.query import QueryPlan, QueryStep, SearchParam
 from fhir_healthcare_ai.domain.results import (
     ExecutedQuery,
@@ -53,6 +53,9 @@ from fhir_healthcare_ai.pipeline.planner import PlanningError, PlanningResult, Q
 from fhir_healthcare_ai.pipeline.response import ResponseGenerator
 
 logger = get_logger(__name__)
+
+#: ``analysis.options`` key: keep only patients with an abnormal result for the concepts.
+REQUIRE_ABNORMAL = "require_abnormal"
 
 #: Resources pulled for a single-patient analysis. Ordered so the Patient arrives first
 #: and demographics are available to everything that follows.
@@ -173,18 +176,25 @@ class PipelineOrchestrator:
             matched_ids, match_warnings = resolver.resolve(retrieval.step_results)
             warnings.extend(match_warnings)
             ordered_ids = sorted(matched_ids)
-            if len(ordered_ids) > self.max_patients:
-                warnings.append(
-                    f"{len(ordered_ids)} patients matched; the response is capped at "
-                    f"{self.max_patients}. Narrow the question for a complete set."
-                )
-                retrieval.truncated = True
-                ordered_ids = ordered_ids[: self.max_patients]
 
         async with stage("normalization"):
             records, stats = self.assembler.assemble(retrieval.resources)
             if stats.unparseable:
                 warnings.append(f"{stats.unparseable} resource(s) could not be parsed")
+
+        if plan.analysis.options.get(REQUIRE_ABNORMAL):
+            async with stage("screening"):
+                ordered_ids = self._screen_abnormal(plan, ordered_ids, records, now, warnings)
+
+        # The cap is applied last, so it limits what is *shown*, never which patients were
+        # eligible: capping before screening would drop real matches for arbitrary ones.
+        if len(ordered_ids) > self.max_patients:
+            warnings.append(
+                f"{len(ordered_ids)} patients matched; the response is capped at "
+                f"{self.max_patients}. Narrow the question for a complete set."
+            )
+            retrieval.truncated = True
+            ordered_ids = ordered_ids[: self.max_patients]
 
         async with stage("features"):
             feature_sets = {
@@ -207,7 +217,7 @@ class PipelineOrchestrator:
 
         cohort = summarize_cohort(
             [feature_sets[pid] for pid in ordered_ids if pid in feature_sets],
-            records=[records[pid] for pid in ordered_ids if pid in records],
+            records={pid: records[pid] for pid in ordered_ids if pid in records},
             per_step_counts={r.step_id: len(r.patient_ids) for r in retrieval.step_results},
         )
 
@@ -270,6 +280,35 @@ class PipelineOrchestrator:
         return analysis
 
     # -- stages -------------------------------------------------------------------
+
+    def _screen_abnormal(
+        self,
+        plan: QueryPlan,
+        patient_ids: Sequence[str],
+        records: dict[str, PatientRecord],
+        now: datetime,
+        warnings: list[str],
+    ) -> list[str]:
+        """Keep only patients with at least one out-of-range result.
+
+        This is how "patients with *abnormal* potassium" is answered: the query fetches
+        every potassium result in the window, and whether a value is abnormal is decided
+        here against the sex-specific reference interval -- a judgement a
+        ``value-quantity`` filter cannot make, because the threshold differs per patient.
+        """
+        screen = AbnormalLabDetector(
+            window_days=plan.analysis.lookback_days or self.detector.window_days,
+            concepts=plan.analysis.concepts or None,
+        )
+        kept = [pid for pid in patient_ids if pid in records and screen.detect(records[pid], now)]
+        dropped = len(patient_ids) - len(kept)
+        if dropped:
+            scope = ", ".join(plan.analysis.concepts) or "any screened concept"
+            warnings.append(
+                f"{dropped} patient(s) had results but none outside the reference interval "
+                f"for {scope}, and were left out"
+            )
+        return kept
 
     async def _plan(self, question: str, *, context: str | None, as_of: datetime) -> PlanningResult:
         try:
@@ -351,10 +390,11 @@ class PipelineOrchestrator:
                 StepResult(
                     step_id=step.step_id,
                     patient_ids=patient_ids,
-                    # A dependent step ran *inside* an already-resolved cohort, so it can
-                    # only confirm membership, never narrow it. Treating it as selective
-                    # would drop every patient who simply has no resource of that type.
-                    selective=step.depends_on is None,
+                    # The plan says what the step means: a dependent `filter` narrows its
+                    # parent ("and a recent medication change"), a `context` step only
+                    # gathers data and must not drop patients who lack it, an `exclude`
+                    # step removes whoever it returns.
+                    role=step.role,
                     truncated=retrieval.truncated,
                 )
             )
@@ -533,6 +573,7 @@ def _patient_plan(patient_id: str, max_count: int) -> QueryPlan:
                 params=[SearchParam(name="patient", values=[patient_id])],
                 sort="-date" if resource_type is ResourceType.OBSERVATION else None,
                 count=max_count,
+                role=StepRole.CONTEXT,
             )
         )
     return QueryPlan(

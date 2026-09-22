@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 
-from fhir_healthcare_ai.domain.enums import AnalysisType, CohortLogic, QueryIntent
+from fhir_healthcare_ai.domain.enums import AnalysisType, CohortLogic, QueryIntent, StepRole
 from fhir_healthcare_ai.fhir.allowlist import describe_allowlist
 from fhir_healthcare_ai.terminology import (
     ConceptDefinition,
@@ -49,16 +49,21 @@ filter (a code, a category, a date range, or a dependency on an earlier step). A
 `Observation?_count=100` is a data scan and will be refused.
 5. Use `depends_on` when a step should only run for the patients an earlier step found. \
 That is how you express "and", and it is far cheaper than fetching everything twice.
-6. `cohort_logic` is "all" when the question joins criteria with "and", "any" when it \
+6. Give every step a `role`. "filter" (the default) means a patient must be returned by \
+the step to be in the cohort. "context" fetches data about patients already selected \
+(their recent labs) and never removes anyone. "exclude" removes every patient the step \
+returns; it is the only way to express "without" or "not on", because FHIR search cannot \
+filter for an absent resource.
+7. `cohort_logic` is "all" when the question joins criteria with "and", "any" when it \
 joins them with "or".
-7. Use at most {MAX_STEPS_HINT} steps. Fewer, more selective steps beat many broad ones.
-8. If the question cannot be answered with the capabilities below, set `unsupported` to \
+8. Use at most {MAX_STEPS_HINT} steps. Fewer, more selective steps beat many broad ones.
+9. If the question cannot be answered with the capabilities below, set `unsupported` to \
 true and explain why in `unsupported_reason`. Do not approximate. A wrong cohort is worse \
 than an honest refusal.
-9. Record any clinical assumption you had to make in `assumptions` -- what "elevated" or \
+10. Record any clinical assumption you had to make in `assumptions` -- what "elevated" or \
 "recent" was taken to mean, which codes stand in for a vague term. These are shown to the \
 user, so they must be complete.
-10. You are not making a clinical decision. You are retrieving evidence for a human to \
+11. You are not making a clinical decision. You are retrieving evidence for a human to \
 review.
 """
 
@@ -88,12 +93,20 @@ PLAN_SCHEMA: dict[str, object] = {
             "sort": "optional -- e.g. '-date'",
             "count": "optional integer",
             "depends_on": "optional -- step_id whose patients scope this step",
+            "role": [role.value for role in StepRole],
         }
     ],
     "analysis": {
         "type": [analysis.value for analysis in AnalysisType],
         "concepts": ["optional -- concept keys the analysis should focus on"],
         "lookback_days": "optional integer",
+        "options": {
+            "require_abnormal": (
+                "optional boolean -- keep only patients with at least one result outside "
+                "the reference interval for `concepts`. Use it for 'abnormal' or "
+                "'out of range' questions instead of guessing a value threshold."
+            )
+        },
     },
     "assumptions": ["string"],
     "unsupported": "boolean",
@@ -129,6 +142,7 @@ FEW_SHOT_PLAN: dict[str, object] = {
             "resource_type": "MedicationRequest",
             "purpose": "Glucose-lowering orders authored recently for those patients.",
             "depends_on": "elevated_hba1c",
+            "role": "filter",
             "params": [
                 {
                     "name": "code",

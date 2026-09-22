@@ -20,6 +20,7 @@ from fhir_healthcare_ai.domain.enums import (
     QueryIntent,
     ResourceType,
     Severity,
+    StepRole,
 )
 
 ParamName = Annotated[str, Field(pattern=r"^[A-Za-z_][A-Za-z0-9_\-]{0,63}$")]
@@ -102,6 +103,10 @@ class QueryStep(BaseModel):
     depends_on: str | None = Field(
         default=None,
         description="step_id whose resulting patient set scopes this step via `patient=`.",
+    )
+    role: StepRole = Field(
+        default=StepRole.FILTER,
+        description="filter narrows the cohort, context never does, exclude removes patients.",
     )
 
     @property

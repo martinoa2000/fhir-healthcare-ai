@@ -15,6 +15,12 @@
       <strong>fhir-healthcare-ai</strong>
       <span class="muted">governed questions over HL7 FHIR R4</span>
     </div>
+    <form id="key-form" class="key-form" autocomplete="off">
+      <label for="api-key" class="muted">API key</label>
+      <input type="password" id="api-key" name="api_key" maxlength="256"
+             placeholder="only if the server requires one">
+      <button type="submit">Use</button>
+    </form>
     <div id="health" class="health" aria-live="polite">
       <span class="badge">checking status…</span>
     </div>

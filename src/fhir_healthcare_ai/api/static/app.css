@@ -63,6 +63,9 @@ a { color: var(--accent); }
 .brand { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
 .health { display: flex; flex-wrap: wrap; gap: 6px; }
 
+.key-form { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.key-form input { width: 14em; max-width: 100%; }
+
 .badge {
   display: inline-block;
   padding: 2px 8px;

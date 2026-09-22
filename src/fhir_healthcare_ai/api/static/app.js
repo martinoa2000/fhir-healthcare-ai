@@ -104,10 +104,33 @@ class ApiError extends Error {
   }
 }
 
-async function api(path, options) {
+// The API key lives in sessionStorage: it survives a reload but not the tab, and is never
+// written into the page. Storage can be unavailable (private mode), so every access is
+// guarded and the key then simply lasts until reload.
+const KEY_STORAGE = "fhir-ai-api-key";
+let apiKey = "";
+try {
+  apiKey = sessionStorage.getItem(KEY_STORAGE) || "";
+} catch (_) {
+  apiKey = "";
+}
+
+function setApiKey(value) {
+  apiKey = value.trim();
+  try {
+    if (apiKey) sessionStorage.setItem(KEY_STORAGE, apiKey);
+    else sessionStorage.removeItem(KEY_STORAGE);
+  } catch (_) {
+    /* storage unavailable: keep it in memory only */
+  }
+}
+
+async function api(path, options = {}) {
+  const headers = { accept: "application/json", ...(options.headers || {}) };
+  if (apiKey) headers["X-API-Key"] = apiKey;
   let response;
   try {
-    response = await fetch(path, { headers: { accept: "application/json" }, ...options });
+    response = await fetch(path, { ...options, headers });
   } catch (err) {
     throw new ApiError(0, [`Network error: ${err.message}`], null);
   }
@@ -469,7 +492,20 @@ function setupPatientForm() {
 
 // ------------------------------------------------------------------------------- boot
 
+function setupKeyForm() {
+  const form = document.getElementById("key-form");
+  const input = document.getElementById("api-key");
+  input.value = apiKey;
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    setApiKey(input.value);
+    loadHealth();
+    loadExamples();
+  });
+}
+
 document.addEventListener("DOMContentLoaded", () => {
+  setupKeyForm();
   setupQueryForm();
   setupPatientForm();
   loadHealth();

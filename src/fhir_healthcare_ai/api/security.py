@@ -46,7 +46,9 @@ ANONYMOUS = "anonymous"
 #: answer for an orchestrator that holds no credentials; ``/`` is the landing page.
 #: ``/docs`` and ``/openapi.json`` are plain Starlette routes that app dependencies do
 #: not reach, so they are public without being listed here.
-PUBLIC_ROUTES: frozenset[str] = frozenset({"/", "/health/live", "/health/ready"})
+# `/ui/{name}` serves the page's own CSS/JS: they hold no data, and the page cannot send a
+# key before it has loaded. Matched on the route template, so no other path slips through.
+PUBLIC_ROUTES: frozenset[str] = frozenset({"/", "/ui/{name}", "/health/live", "/health/ready"})
 
 # auto_error=False: a missing credential is reported by us, with the shared error shape
 # and a WWW-Authenticate header, rather than by FastAPI's own 403.

@@ -110,8 +110,9 @@ def test_probes_docs_and_root_stay_public(secured: tuple[TestClient, InMemoryAud
     assert client.get("/health/ready").status_code == 200
     assert client.get("/openapi.json").status_code == 200
     assert client.get("/docs").status_code == 200
-    # No landing page is registered here; the point is that / is not a 401.
-    assert client.get("/").status_code == 404
+    # The UI shell and its assets hold no data and must load before a key can be entered.
+    assert client.get("/").status_code == 200
+    assert client.get("/ui/app.js").status_code == 200
 
 
 def test_actor_is_audited_and_the_secret_never_is(

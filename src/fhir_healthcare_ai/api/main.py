@@ -138,6 +138,9 @@ def create_app(
     )
     app.middleware("http")(_correlation_middleware)
     _register_routes(app)
+    from fhir_healthcare_ai.api.export_routes import router as export_router  # imports this module
+
+    app.include_router(export_router)
     return app
 
 

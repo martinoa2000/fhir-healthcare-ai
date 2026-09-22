@@ -65,6 +65,7 @@ never silent.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `POST` | `/query` | Answer a natural-language question: plan, FHIR queries, patients, evidence, analytics, warnings, execution trace |
+| `POST` | `/query/export?format=csv\|group\|bundle` | Same body as `/query`; the cohort as a CSV download (`cohort.csv`, formula-injection safe) or an R4 `Group` / `collection` `Bundle` (`application/fhir+json`) carrying the executed queries. Deterministic ids; refused questions export empty |
 | `GET` | `/patient/{id}/analyze` | Single-patient features, abnormal labs and a risk estimate. Fixed retrieval, no model |
 | `GET` | `/capabilities` | Allowlisted resources and parameters, concept vocabulary, feature contract, limits |
 | `GET` | `/health` | FHIR reachability, active vs. configured LLM backend, fallback status |

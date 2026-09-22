@@ -34,6 +34,7 @@ AuditAction = Literal[
     "resources.fetched",
     "analysis.executed",
     "response.generated",
+    "response.exported",
     "llm.call",
 ]
 

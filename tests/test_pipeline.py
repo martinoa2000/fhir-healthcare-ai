@@ -82,7 +82,47 @@ async def test_every_match_carries_evidence(orchestrator: PipelineOrchestrator) 
     for match in response.patients:
         assert match.evidence
         assert all(e.patient_id == match.patient_id for e in match.evidence)
-    assert all(q.startswith("Observation?") for q in response.fhir_queries)
+    assert all(q.startswith(("Observation?", "Patient?")) for q in response.fhir_queries)
+
+
+async def test_cohort_matches_carry_demographics(
+    orchestrator: PipelineOrchestrator, dataset: SyntheticDataset
+) -> None:
+    """A cohort selected by Observations still reports each patient's age and sex."""
+    response = await orchestrator.answer(
+        "Which patients have elevated HbA1c?", as_of=AS_OF, narrate=False
+    )
+    genders = {r["id"]: r["gender"] for r in dataset.resources if r["resourceType"] == "Patient"}
+    assert response.patients
+    for match in response.patients:
+        assert match.age_years is not None
+        assert match.gender == genders[match.patient_id]
+
+
+async def test_demographics_fetch_is_scoped_to_the_cohort(
+    orchestrator: PipelineOrchestrator,
+) -> None:
+    response = await orchestrator.answer(
+        "Which patients have elevated HbA1c?", as_of=AS_OF, narrate=False
+    )
+    patient_queries = [q for q in response.fhir_queries if q.startswith("Patient?")]
+    assert patient_queries, "demographics were not fetched"
+    requested: set[str] = set()
+    for query in patient_queries:
+        params = dict(part.split("=", 1) for part in query.split("?", 1)[1].split("&"))
+        assert set(params) == {"_id", "_count"}
+        requested |= set(params["_id"].split(","))
+    assert requested == {p.patient_id for p in response.patients}
+
+
+async def test_demographics_are_not_refetched_when_the_plan_has_them(
+    orchestrator: PipelineOrchestrator,
+) -> None:
+    response = await orchestrator.answer(
+        "Summarize the record of patient syn7-pat-0001", as_of=AS_OF, narrate=False
+    )
+    assert sum(q.startswith("Patient?") for q in response.fhir_queries) == 1
+    assert response.patients[0].gender is not None
 
 
 async def test_response_cap_limits_what_is_shown(

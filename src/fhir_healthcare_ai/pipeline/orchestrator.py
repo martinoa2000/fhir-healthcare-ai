@@ -73,6 +73,10 @@ class PipelineError(RuntimeError):
     """The pipeline could not produce an answer."""
 
 
+class PatientNotFoundError(PipelineError):
+    """The FHIR server holds no data for the requested patient."""
+
+
 @dataclass
 class Retrieval:
     """Everything the retrieval stage produced."""
@@ -257,7 +261,7 @@ class PipelineOrchestrator:
 
         record = self.assembler.assemble_one(patient_id, retrieval.resources)
         if record.resource_count == 0:
-            raise PipelineError(f"no data found for patient {patient_id}")
+            raise PatientNotFoundError(f"no data found for patient {patient_id}")
 
         features = self.features.build(record, now)
         analysis = self.generator.build_analysis(

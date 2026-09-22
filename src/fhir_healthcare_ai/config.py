@@ -30,6 +30,12 @@ class FHIRSettings(BaseSettings):
     max_total_resources: int = Field(default=2000, ge=1)
     allow_write: bool = False
 
+    #: Serve a generated synthetic population from an in-process server instead of
+    #: calling ``base_url``. For demos and CI without Docker; never for real data.
+    in_memory: bool = False
+    in_memory_patients: int = Field(default=120, ge=1, le=5000)
+    in_memory_seed: int = 42
+
     @field_validator("base_url")
     @classmethod
     def _strip_trailing_slash(cls, v: str) -> str:

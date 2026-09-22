@@ -11,7 +11,7 @@ import contextvars
 import json
 import logging
 import sys
-from typing import Any
+from typing import Any, TextIO
 
 correlation_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "correlation_id", default=None
@@ -53,14 +53,20 @@ class CorrelationFilter(logging.Filter):
         return True
 
 
-def configure_logging(level: str = "INFO", json_output: bool = True) -> None:
-    """Install the root handler. Safe to call more than once."""
+def configure_logging(
+    level: str = "INFO", json_output: bool = True, stream: TextIO | None = None
+) -> None:
+    """Install the root handler. Safe to call more than once.
+
+    ``stream`` defaults to stdout, where container log collectors look. CLIs whose
+    stdout is the product (``fhir-ai-bench --json``) pass stderr instead.
+    """
     root = logging.getLogger()
     root.setLevel(level.upper())
     for handler in list(root.handlers):
         root.removeHandler(handler)
 
-    handler = logging.StreamHandler(sys.stdout)
+    handler = logging.StreamHandler(stream or sys.stdout)
     if json_output:
         handler.setFormatter(JSONFormatter())
     else:

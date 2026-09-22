@@ -26,7 +26,7 @@ from typing import Any
 
 from fhir_healthcare_ai.llm.base import LLMMessage, LLMProvider, LLMResponse
 from fhir_healthcare_ai.logging_config import get_logger
-from fhir_healthcare_ai.terminology import LOINC, RXNORM, SNOMED
+from fhir_healthcare_ai.terminology import LOINC, RXNORM
 
 logger = get_logger(__name__)
 
@@ -134,6 +134,15 @@ def _token(name: str, values: Sequence[str], system: str) -> dict[str, Any]:
     return {"name": name, "values": list(values), "system": system}
 
 
+def _concept(name: str, values: Sequence[str]) -> dict[str, Any]:
+    """A concept search across every coding system the concept maps to.
+
+    Diagnoses arrive coded in SNOMED CT from one source and ICD-10-CM from another;
+    pinning the search to one system silently drops the other population.
+    """
+    return {"name": name, "values": list(values)}
+
+
 def _elevated_hba1c_with_med_change(question: str, today: datetime) -> dict[str, Any]:
     return {
         "question": question,
@@ -237,7 +246,7 @@ def _ckd_cohort(question: str, today: datetime) -> dict[str, Any]:
                 "purpose": "An active chronic kidney disease problem for those patients.",
                 "depends_on": "low_egfr",
                 "params": [
-                    _token("code", ["chronic_kidney_disease"], SNOMED),
+                    _concept("code", ["chronic_kidney_disease"]),
                     {"name": "clinical-status", "values": ["active"]},
                 ],
                 "count": 200,
@@ -323,7 +332,7 @@ def _diabetes_no_statin(question: str, today: datetime) -> dict[str, Any]:
                 "resource_type": "Condition",
                 "purpose": "Patients with an active type 2 diabetes problem.",
                 "params": [
-                    _token("code", ["type_2_diabetes"], SNOMED),
+                    _concept("code", ["type_2_diabetes"]),
                     {"name": "clinical-status", "values": ["active"]},
                 ],
                 "count": 200,
@@ -334,7 +343,10 @@ def _diabetes_no_statin(question: str, today: datetime) -> dict[str, Any]:
                 "resource_type": "MedicationRequest",
                 "purpose": "Statin orders for that cohort, used to exclude patients who have one.",
                 "depends_on": "diabetes",
-                "params": [_token("code", STATINS, RXNORM)],
+                "params": [
+                    _token("code", STATINS, RXNORM),
+                    {"name": "status", "values": ["active"]},
+                ],
                 "count": 200,
             },
         ],
@@ -345,6 +357,7 @@ def _diabetes_no_statin(question: str, today: datetime) -> dict[str, Any]:
         },
         "assumptions": [
             "Negation is resolved after retrieval: FHIR search has no 'absent resource' filter.",
+            "'On a statin' was read as an active statin order; stopped statins do not count.",
         ],
         "unsupported": False,
         "unsupported_reason": None,
@@ -420,7 +433,7 @@ def _high_risk_cohort(question: str, today: datetime) -> dict[str, Any]:
                 "resource_type": "Condition",
                 "purpose": "Patients with an active diabetes problem.",
                 "params": [
-                    _token("code", ["type_2_diabetes", "type_1_diabetes"], SNOMED),
+                    _concept("code", ["type_2_diabetes", "type_1_diabetes"]),
                     {"name": "clinical-status", "values": ["active"]},
                 ],
                 "count": 200,

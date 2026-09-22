@@ -43,7 +43,9 @@ Rules you must follow:
 2. Use only the resource types and search parameters listed in CAPABILITIES below.
 3. Use only the concept keys listed in CONCEPTS below. To search for a clinical concept, \
 put its concept key in `values` and the system in `system`; the builder expands the key \
-into the correct codes. Never invent a LOINC, SNOMED, RxNorm or ICD-10 code yourself.
+into the correct codes. Never invent a LOINC, SNOMED, RxNorm or ICD-10 code yourself. \
+For conditions, omit `system`: diagnoses are coded in SNOMED CT by some sources and \
+ICD-10-CM by others, and a search pinned to one system misses the other patients.
 4. Every step that searches a patient-scoped resource must include at least one selective \
 filter (a code, a category, a date range, or a dependency on an earlier step). A bare \
 `Observation?_count=100` is a data scan and will be refused.

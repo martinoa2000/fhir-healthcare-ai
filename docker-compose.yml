@@ -113,8 +113,8 @@ services:
   #   docker compose up                    -> rule-based planner, no GPU
   #   docker compose --profile vllm up     -> local LLM planner
   #
-  # No hosted API is involved in either case. Question text never leaves the
-  # host unless the operator explicitly configures LLM_PROVIDER=openai/anthropic.
+  # No hosted API is involved in either case, and none is supported: question
+  # text never leaves the host.
   # ---------------------------------------------------------------------
   vllm:
     profiles: ["vllm"]

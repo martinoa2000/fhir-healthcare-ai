@@ -14,6 +14,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- The local vLLM server is the only model backend. The OpenAI, Anthropic and
+  in-process Hugging Face providers are removed, so question text can never be sent to
+  a hosted API; `LLM_PROVIDER` accepts `vllm` or `mock`. Unused numpy, scikit-learn and
+  PyYAML dependencies are dropped.
 - The local model is now Qwen3.8-27B (`Qwen/Qwen3.8-27B-FP8`) served by
   `vllm/vllm-openai:v0.30.0`, replacing Qwen2.5-7B-Instruct on vLLM 0.6.3. Qwen3
   thinking mode is off by default (`LLM_ENABLE_THINKING`), on the server and per

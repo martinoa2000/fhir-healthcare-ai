@@ -1,6 +1,6 @@
 # --- Secrets and local configuration -------------------------------------------------
-# .env holds the FHIR base URL, the LLM endpoint and any API key for the hosted
-# providers. It must never be committed; .env.example is the documented template.
+# .env holds the FHIR base URL, the LLM endpoint and API keys. It must never be
+# committed; .env.example is the documented template.
 .env
 .env.*
 !.env.example
@@ -20,7 +20,7 @@ audit*.log
 benchmark-results/
 
 # --- Local model weights -------------------------------------------------------------
-# The HuggingFace provider caches multi-gigabyte checkpoints. Keep them out of the repo.
+# vLLM and the Hub cache multi-gigabyte checkpoints. Keep them out of the repo.
 models/
 .cache/
 *.safetensors

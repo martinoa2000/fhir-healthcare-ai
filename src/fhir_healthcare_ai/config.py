@@ -9,9 +9,9 @@ from typing import Literal, Self
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-#: Inference backends. The first three keep the model inside the deployment boundary;
-#: the hosted ones exist to show the abstraction holds, not because the demo needs them.
-LLMProviderName = Literal["vllm", "huggingface", "mock", "openai", "anthropic"]
+#: Inference backends. Both keep the model inside the deployment boundary: ``vllm`` is a
+#: locally hosted model server, ``mock`` the deterministic planner. No hosted API exists.
+LLMProviderName = Literal["vllm", "mock"]
 
 
 class FHIRSettings(BaseSettings):
@@ -56,9 +56,9 @@ class LLMSettings(BaseSettings):
 
     provider: LLMProviderName = "vllm"
     model: str = "Qwen/Qwen3.8-27B-FP8"
+    #: Bearer token, only for a vLLM server started with ``--api-key``.
     api_key: str | None = None
-    #: OpenAI-compatible endpoint for the ``vllm`` provider. Ignored by ``huggingface``,
-    #: which loads the model in-process.
+    #: OpenAI-compatible endpoint of the local vLLM server.
     base_url: str | None = None
     temperature: float = Field(default=0.0, ge=0.0, le=2.0)
     max_tokens: int = Field(default=2048, ge=1)

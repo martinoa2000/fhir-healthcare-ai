@@ -2,7 +2,7 @@
 
 Clinical systems need logs that can be shipped to a SIEM without reparsing, so the
 default formatter emits one JSON object per line. Every log record carries a
-``correlation_id`` when one is bound to the current context.
+``correlation_id`` and an ``actor`` when they are bound to the current context.
 """
 
 from __future__ import annotations
@@ -11,11 +11,14 @@ import contextvars
 import json
 import logging
 import sys
-from typing import Any
+from typing import Any, TextIO
 
 correlation_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "correlation_id", default=None
 )
+#: The authenticated caller: an API key *name* (never the key), or ``"anonymous"`` when
+#: authentication is disabled. Unset outside a request, e.g. during startup.
+actor_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("actor", default=None)
 
 _RESERVED = set(logging.LogRecord("", 0, "", 0, "", (), None).__dict__) | {
     "message",
@@ -37,6 +40,9 @@ class JSONFormatter(logging.Formatter):
         cid = correlation_id_var.get()
         if cid:
             payload["correlation_id"] = cid
+        actor = actor_var.get()
+        if actor:
+            payload["actor"] = actor
         if record.exc_info:
             payload["exception"] = self.formatException(record.exc_info)
         for key, value in record.__dict__.items():
@@ -53,14 +59,20 @@ class CorrelationFilter(logging.Filter):
         return True
 
 
-def configure_logging(level: str = "INFO", json_output: bool = True) -> None:
-    """Install the root handler. Safe to call more than once."""
+def configure_logging(
+    level: str = "INFO", json_output: bool = True, stream: TextIO | None = None
+) -> None:
+    """Install the root handler. Safe to call more than once.
+
+    ``stream`` defaults to stdout, where container log collectors look. CLIs whose
+    stdout is the product (``fhir-ai-bench --json``) pass stderr instead.
+    """
     root = logging.getLogger()
     root.setLevel(level.upper())
     for handler in list(root.handlers):
         root.removeHandler(handler)
 
-    handler = logging.StreamHandler(sys.stdout)
+    handler = logging.StreamHandler(stream or sys.stdout)
     if json_output:
         handler.setFormatter(JSONFormatter())
     else:

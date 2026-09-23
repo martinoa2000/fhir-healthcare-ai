@@ -12,8 +12,8 @@ FHIR_BASE_URL ?= http://localhost:8080/fhir
 PATIENTS      ?= 120
 SEED          ?= 42
 
-.PHONY: help install lint format typecheck test test-integration test-all cov \
-        run seed bench up down down-volumes logs clean
+.PHONY: help install lint format typecheck check test test-integration test-all cov \
+        run demo seed bench up down down-volumes logs clean
 
 help: ## Show this help
 	@echo "fhir-healthcare-ai - available targets:"
@@ -33,6 +33,8 @@ format: ## Auto-format the codebase with ruff
 typecheck: ## Run mypy over src/
 	mypy src
 
+check: lint typecheck test bench ## Everything CI runs
+
 test: ## Run unit tests (no live FHIR server required)
 	pytest -m "not integration"
 
@@ -45,6 +47,10 @@ test-all: ## Run the full suite, unit and integration
 cov: ## Run unit tests with a coverage report
 	pytest -m "not integration" \
 		--cov=fhir_healthcare_ai --cov-report=term-missing --cov-report=xml
+
+demo: ## Run the API on an in-memory synthetic population: no Docker, no model, no key
+	FHIR_IN_MEMORY=true LLM_PROVIDER=mock LOG_JSON=false \
+		uvicorn fhir_healthcare_ai.api.main:app --host 127.0.0.1 --port 8000
 
 run: ## Run the API locally with auto-reload on http://127.0.0.1:8000
 	uvicorn fhir_healthcare_ai.api.main:app --reload --host 127.0.0.1 --port 8000

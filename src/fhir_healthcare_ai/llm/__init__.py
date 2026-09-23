@@ -16,7 +16,14 @@ from fhir_healthcare_ai.llm.base import (
     LLMUnavailableError,
     extract_json_object,
 )
-from fhir_healthcare_ai.llm.factory import LOCAL_PROVIDERS, PROVIDERS, build_provider, is_local
+from fhir_healthcare_ai.llm.factory import (
+    LOCAL_PROVIDERS,
+    PROVIDERS,
+    ProviderStatus,
+    build_provider,
+    is_local,
+    resolve_provider,
+)
 from fhir_healthcare_ai.llm.local import HuggingFaceProvider, VLLMProvider
 from fhir_healthcare_ai.llm.mock import MockLLMProvider, plan_for
 from fhir_healthcare_ai.llm.prompts import build_narrative_prompt, build_planning_prompt
@@ -32,6 +39,7 @@ __all__ = [
     "LLMResponseError",
     "LLMUnavailableError",
     "MockLLMProvider",
+    "ProviderStatus",
     "VLLMProvider",
     "build_narrative_prompt",
     "build_planning_prompt",
@@ -39,4 +47,5 @@ __all__ = [
     "extract_json_object",
     "is_local",
     "plan_for",
+    "resolve_provider",
 ]

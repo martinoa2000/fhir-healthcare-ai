@@ -34,8 +34,8 @@ from fhir_healthcare_ai.analytics.risk import RiskStratifier
 from fhir_healthcare_ai.audit import AuditEvent, AuditSink, LoggingAuditSink
 from fhir_healthcare_ai.config import Settings, get_settings
 from fhir_healthcare_ai.domain.clinical import PatientRecord
-from fhir_healthcare_ai.domain.enums import AnalysisType, QueryIntent, ResourceType
-from fhir_healthcare_ai.domain.query import QueryPlan, QueryStep, SearchParam
+from fhir_healthcare_ai.domain.enums import AnalysisType, QueryIntent, ResourceType, StepRole
+from fhir_healthcare_ai.domain.query import FHIRQuery, QueryPlan, QueryStep, SearchParam
 from fhir_healthcare_ai.domain.results import (
     ExecutedQuery,
     ExecutionTrace,
@@ -54,6 +54,12 @@ from fhir_healthcare_ai.pipeline.response import ResponseGenerator
 
 logger = get_logger(__name__)
 
+#: Step id of the demographics fetch that follows cohort resolution.
+DEMOGRAPHICS_STEP = "demographics"
+
+#: ``analysis.options`` key: keep only patients with an abnormal result for the concepts.
+REQUIRE_ABNORMAL = "require_abnormal"
+
 #: Resources pulled for a single-patient analysis. Ordered so the Patient arrives first
 #: and demographics are available to everything that follows.
 PATIENT_ANALYSIS_RESOURCES: tuple[ResourceType, ...] = (
@@ -68,6 +74,10 @@ PATIENT_ANALYSIS_RESOURCES: tuple[ResourceType, ...] = (
 
 class PipelineError(RuntimeError):
     """The pipeline could not produce an answer."""
+
+
+class PatientNotFoundError(PipelineError):
+    """The FHIR server holds no data for the requested patient."""
 
 
 @dataclass
@@ -173,18 +183,28 @@ class PipelineOrchestrator:
             matched_ids, match_warnings = resolver.resolve(retrieval.step_results)
             warnings.extend(match_warnings)
             ordered_ids = sorted(matched_ids)
-            if len(ordered_ids) > self.max_patients:
-                warnings.append(
-                    f"{len(ordered_ids)} patients matched; the response is capped at "
-                    f"{self.max_patients}. Narrow the question for a complete set."
-                )
-                retrieval.truncated = True
-                ordered_ids = ordered_ids[: self.max_patients]
+
+        async with stage("demographics"):
+            await self._fetch_demographics(ordered_ids, retrieval)
 
         async with stage("normalization"):
             records, stats = self.assembler.assemble(retrieval.resources)
             if stats.unparseable:
                 warnings.append(f"{stats.unparseable} resource(s) could not be parsed")
+
+        if plan.analysis.options.get(REQUIRE_ABNORMAL):
+            async with stage("screening"):
+                ordered_ids = self._screen_abnormal(plan, ordered_ids, records, now, warnings)
+
+        # The cap is applied last, so it limits what is *shown*, never which patients were
+        # eligible: capping before screening would drop real matches for arbitrary ones.
+        if len(ordered_ids) > self.max_patients:
+            warnings.append(
+                f"{len(ordered_ids)} patients matched; the response is capped at "
+                f"{self.max_patients}. Narrow the question for a complete set."
+            )
+            retrieval.truncated = True
+            ordered_ids = ordered_ids[: self.max_patients]
 
         async with stage("features"):
             feature_sets = {
@@ -207,7 +227,7 @@ class PipelineOrchestrator:
 
         cohort = summarize_cohort(
             [feature_sets[pid] for pid in ordered_ids if pid in feature_sets],
-            records=[records[pid] for pid in ordered_ids if pid in records],
+            records={pid: records[pid] for pid in ordered_ids if pid in records},
             per_step_counts={r.step_id: len(r.patient_ids) for r in retrieval.step_results},
         )
 
@@ -247,7 +267,7 @@ class PipelineOrchestrator:
 
         record = self.assembler.assemble_one(patient_id, retrieval.resources)
         if record.resource_count == 0:
-            raise PipelineError(f"no data found for patient {patient_id}")
+            raise PatientNotFoundError(f"no data found for patient {patient_id}")
 
         features = self.features.build(record, now)
         analysis = self.generator.build_analysis(
@@ -271,6 +291,35 @@ class PipelineOrchestrator:
 
     # -- stages -------------------------------------------------------------------
 
+    def _screen_abnormal(
+        self,
+        plan: QueryPlan,
+        patient_ids: Sequence[str],
+        records: dict[str, PatientRecord],
+        now: datetime,
+        warnings: list[str],
+    ) -> list[str]:
+        """Keep only patients with at least one out-of-range result.
+
+        This is how "patients with *abnormal* potassium" is answered: the query fetches
+        every potassium result in the window, and whether a value is abnormal is decided
+        here against the sex-specific reference interval -- a judgement a
+        ``value-quantity`` filter cannot make, because the threshold differs per patient.
+        """
+        screen = AbnormalLabDetector(
+            window_days=plan.analysis.lookback_days or self.detector.window_days,
+            concepts=plan.analysis.concepts or None,
+        )
+        kept = [pid for pid in patient_ids if pid in records and screen.detect(records[pid], now)]
+        dropped = len(patient_ids) - len(kept)
+        if dropped:
+            scope = ", ".join(plan.analysis.concepts) or "any screened concept"
+            warnings.append(
+                f"{dropped} patient(s) had results but none outside the reference interval "
+                f"for {scope}, and were left out"
+            )
+        return kept
+
     async def _plan(self, question: str, *, context: str | None, as_of: datetime) -> PlanningResult:
         try:
             return await self.planner.plan(question, context=context, as_of=as_of)
@@ -286,7 +335,6 @@ class PipelineOrchestrator:
         """
         retrieval = Retrieval()
         completed: dict[str, set[str]] = {}
-        budget = self.settings.fhir.max_total_resources
 
         for step in _in_dependency_order(plan.steps):
             scope: set[str] | None = None
@@ -308,57 +356,93 @@ class PipelineOrchestrator:
                 completed[step.step_id] = set()
                 continue
 
-            patient_ids: set[str] = set()
-            for query in queries:
-                if retrieval.resource_count >= budget:
-                    retrieval.truncated = True
-                    retrieval.errors.append(
-                        f"stopped after {budget} resources; results are partial"
-                    )
-                    break
-                try:
-                    result = await self.client.search(query)
-                except FHIRError as exc:
-                    retrieval.errors.append(f"step {step.step_id!r} failed: {exc}")
-                    retrieval.executed.append(
-                        ExecutedQuery(step_id=step.step_id, query=query, error=str(exc))
-                    )
-                    continue
-
-                resources = result.all_resources
-                step_ids = {
-                    pid for pid in (_subject_id(raw) for raw in resources) if pid is not None
-                }
-                patient_ids |= step_ids
-                retrieval.resources.extend(resources)
-                for raw in resources:
-                    reference = _reference_of(raw)
-                    if reference:
-                        retrieval.step_by_resource.setdefault(reference, step.step_id)
-                retrieval.truncated = retrieval.truncated or result.truncated
-                retrieval.executed.append(
-                    ExecutedQuery(
-                        step_id=step.step_id,
-                        query=query,
-                        resource_count=len(resources),
-                        patient_ids=step_ids,
-                        truncated=result.truncated,
-                    )
-                )
-
+            patient_ids = await self._execute(step.step_id, queries, retrieval)
             completed[step.step_id] = patient_ids
             retrieval.step_results.append(
                 StepResult(
                     step_id=step.step_id,
                     patient_ids=patient_ids,
-                    # A dependent step ran *inside* an already-resolved cohort, so it can
-                    # only confirm membership, never narrow it. Treating it as selective
-                    # would drop every patient who simply has no resource of that type.
-                    selective=step.depends_on is None,
+                    # The plan says what the step means: a dependent `filter` narrows its
+                    # parent ("and a recent medication change"), a `context` step only
+                    # gathers data and must not drop patients who lack it, an `exclude`
+                    # step removes whoever it returns.
+                    role=step.role,
                     truncated=retrieval.truncated,
                 )
             )
         return retrieval
+
+    async def _execute(
+        self, step_id: str, queries: Sequence[FHIRQuery], retrieval: Retrieval
+    ) -> set[str]:
+        """Run one step's queries into ``retrieval``; return the patients they touched."""
+        budget = self.settings.fhir.max_total_resources
+        patient_ids: set[str] = set()
+        for query in queries:
+            if retrieval.resource_count >= budget:
+                retrieval.truncated = True
+                retrieval.errors.append(f"stopped after {budget} resources; results are partial")
+                break
+            try:
+                result = await self.client.search(query)
+            except FHIRError as exc:
+                retrieval.errors.append(f"step {step_id!r} failed: {exc}")
+                retrieval.executed.append(
+                    ExecutedQuery(step_id=step_id, query=query, error=str(exc))
+                )
+                continue
+
+            resources = result.all_resources
+            step_ids = {pid for pid in (_subject_id(raw) for raw in resources) if pid is not None}
+            patient_ids |= step_ids
+            retrieval.resources.extend(resources)
+            for raw in resources:
+                reference = _reference_of(raw)
+                if reference:
+                    retrieval.step_by_resource.setdefault(reference, step_id)
+            retrieval.truncated = retrieval.truncated or result.truncated
+            retrieval.executed.append(
+                ExecutedQuery(
+                    step_id=step_id,
+                    query=query,
+                    resource_count=len(resources),
+                    patient_ids=step_ids,
+                    truncated=result.truncated,
+                )
+            )
+        return patient_ids
+
+    async def _fetch_demographics(self, patient_ids: Sequence[str], retrieval: Retrieval) -> None:
+        """Fetch the Patient resource of every cohort member the plan did not retrieve.
+
+        A cohort selected by its Observations ("elevated HbA1c") never touches Patient,
+        so without this every match would come back with no age or sex -- and screening
+        against sex-specific reference intervals would silently fall back to the
+        unisex range. The request goes through the builder and validator like any
+        model-authored step; it is scoped by ``_id`` to the cohort and nothing else, and
+        it is not a cohort step, so it cannot change who matched.
+        """
+        present = {
+            raw.get("id")
+            for raw in retrieval.resources
+            if isinstance(raw, dict) and raw.get("resourceType") == ResourceType.PATIENT.value
+        }
+        missing = [pid for pid in patient_ids if pid not in present]
+        if not missing:
+            return
+        step = QueryStep(
+            step_id=DEMOGRAPHICS_STEP,
+            resource_type=ResourceType.PATIENT,
+            purpose="Demographics of the matched cohort.",
+            role=StepRole.CONTEXT,
+            count=self.settings.fhir.max_page_size,
+        )
+        try:
+            queries = self.builder.build_step(step, patient_ids=missing)
+        except QueryBuildError as exc:  # pragma: no cover - a fixed, allowlisted step
+            retrieval.errors.append(f"demographics could not be fetched: {exc}")
+            return
+        await self._execute(step.step_id, queries, retrieval)
 
     def _analyze(
         self,
@@ -533,6 +617,7 @@ def _patient_plan(patient_id: str, max_count: int) -> QueryPlan:
                 params=[SearchParam(name="patient", values=[patient_id])],
                 sort="-date" if resource_type is ResourceType.OBSERVATION else None,
                 count=max_count,
+                role=StepRole.CONTEXT,
             )
         )
     return QueryPlan(

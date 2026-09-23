@@ -117,8 +117,9 @@ def describe_features() -> tuple[FeatureSpec, ...]:
         ),
     ]
     for concept in LAB_FEATURE_CONCEPTS:
-        label = get_concept(concept).display if get_concept(concept) else concept
-        unit = get_concept(concept).canonical_unit if get_concept(concept) else None
+        definition = get_concept(concept)
+        label = definition.display if definition else concept
+        unit = definition.canonical_unit if definition else None
         suffix = f" ({unit})" if unit else ""
         specs += [
             FeatureSpec(f"{concept}_latest", "float", f"Most recent {label}{suffix}.", "labs"),

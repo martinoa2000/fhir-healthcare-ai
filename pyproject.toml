@@ -54,8 +54,8 @@ fhir-ai-seed = "fhir_healthcare_ai.synthetic.cli:main"
 fhir-ai-bench = "fhir_healthcare_ai.benchmark.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/your-org/fhir-healthcare-ai"
-Issues = "https://github.com/your-org/fhir-healthcare-ai/issues"
+Homepage = "https://github.com/martinoa2000/fhir-healthcare-ai"
+Issues = "https://github.com/martinoa2000/fhir-healthcare-ai/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/fhir_healthcare_ai"]
@@ -99,7 +99,8 @@ explicit_package_bases = true
 mypy_path = "src"
 
 [[tool.mypy.overrides]]
-module = ["sklearn.*", "pandas.*", "respx.*"]
+# Optional extras (`[hf]`, `[openai]`, `[anthropic]`) are imported lazily and may be absent.
+module = ["sklearn.*", "pandas.*", "respx.*", "openai.*", "anthropic.*", "torch.*", "transformers.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
@@ -110,7 +111,10 @@ asyncio_mode = "auto"
 markers = [
     "integration: requires a live FHIR server (deselect with '-m \"not integration\"')",
 ]
-filterwarnings = ["ignore::DeprecationWarning"]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated",
+]
 
 [tool.coverage.run]
 source = ["src/fhir_healthcare_ai"]

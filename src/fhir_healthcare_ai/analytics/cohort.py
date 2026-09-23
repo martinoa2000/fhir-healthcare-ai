@@ -11,10 +11,21 @@ cohort is the job of :class:`CohortLogic`:
 ``ANY``
     Union. Used for questions phrased as "patients on metformin or a sulfonylurea".
 
-Steps that retrieve context rather than select patients (the ``depends_on`` steps that
-fetch a cohort's labs after the cohort is known) must not narrow the intersection --
-they run *after* the cohort exists and by construction only return members of it.
-:meth:`CohortResolver.resolve` therefore only intersects over selective steps.
+Each step also carries a :class:`~fhir_healthcare_ai.domain.enums.StepRole`:
+
+``filter``
+    The step selects patients and takes part in the ``ALL``/``ANY`` combination. A
+    dependent filter step ("... *and* a recent medication change") narrows its parent.
+
+``context``
+    The step fetches data about patients who are already selected (a cohort's recent
+    labs). It must not narrow the cohort: a patient with no lab in the window is still
+    a member, just one with a data gap.
+
+``exclude``
+    Every patient the step returns is removed from the cohort. This is how "diabetic
+    patients *not* on a statin" is answered, since FHIR search cannot express an absent
+    resource.
 
 Aggregate statistics are computed from the feature layer, never from raw resources, and
 report ``n`` alongside every statistic because a median over three patients and a
@@ -29,7 +40,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from fhir_healthcare_ai.domain.clinical import PatientRecord
-from fhir_healthcare_ai.domain.enums import CohortLogic
+from fhir_healthcare_ai.domain.enums import CohortLogic, StepRole
 from fhir_healthcare_ai.domain.results import CohortSummary, Evidence, PatientMatch
 from fhir_healthcare_ai.features.builder import FeatureSet
 from fhir_healthcare_ai.logging_config import get_logger
@@ -63,19 +74,23 @@ DEFAULT_SUMMARY_FLAGS: tuple[str, ...] = (
 
 @dataclass
 class StepResult:
-    """Which patients one plan step selected, and whether it was selective at all.
+    """Which patients one plan step returned, and what that means for the cohort.
 
     Args:
         step_id: The plan step this came from.
         patient_ids: Patients the step returned.
-        selective: False for context-fetching steps, which must not narrow the cohort.
+        role: How the step's patient set combines into the cohort.
         truncated: The step hit a page or resource cap, so its patient set is partial.
     """
 
     step_id: str
     patient_ids: set[str] = field(default_factory=set)
-    selective: bool = True
+    role: StepRole = StepRole.FILTER
     truncated: bool = False
+
+    @property
+    def selective(self) -> bool:
+        return self.role is StepRole.FILTER
 
 
 class CohortResolver:
@@ -87,13 +102,16 @@ class CohortResolver:
     def resolve(self, steps: Sequence[StepResult]) -> tuple[set[str], list[str]]:
         """Return the cohort and any warnings about how it was derived."""
         warnings: list[str] = []
-        selective = [step for step in steps if step.selective]
+        selective = [step for step in steps if step.role is StepRole.FILTER]
+        excluding = [step for step in steps if step.role is StepRole.EXCLUDE]
 
         if not selective:
             warnings.append(
                 "no selective step in the plan; cohort is the union of everything retrieved"
             )
-            return set().union(*(step.patient_ids for step in steps)) if steps else set(), warnings
+            included = [step for step in steps if step.role is not StepRole.EXCLUDE]
+            cohort = set().union(*(step.patient_ids for step in included))
+            return self._exclude(cohort, excluding, warnings), warnings
 
         if any(step.truncated for step in selective):
             truncated_ids = [step.step_id for step in selective if step.truncated]
@@ -110,15 +128,40 @@ class CohortResolver:
 
         sets = [step.patient_ids for step in selective]
         if self.logic is CohortLogic.ANY:
-            return set().union(*sets), warnings
-        cohort = set(sets[0])
-        for other in sets[1:]:
-            cohort &= other
-        return cohort, warnings
+            cohort = set().union(*sets)
+        else:
+            cohort = set(sets[0])
+            for other in sets[1:]:
+                cohort &= other
+        return self._exclude(cohort, excluding, warnings), warnings
+
+    @staticmethod
+    def _exclude(
+        cohort: set[str], excluding: Sequence[StepResult], warnings: list[str]
+    ) -> set[str]:
+        for step in excluding:
+            if step.truncated:
+                # A partial exclusion list errs towards *keeping* patients who should
+                # have been removed, which is the direction a reviewer must be told about.
+                warnings.append(
+                    f"exclusion step {step.step_id} was truncated; some patients it should "
+                    "have removed may still be listed"
+                )
+            removed = cohort & step.patient_ids
+            if removed:
+                warnings.append(
+                    f"{len(removed)} patient(s) removed by exclusion step {step.step_id}"
+                )
+            cohort = cohort - step.patient_ids
+        return cohort
 
     def matched_steps(self, patient_id: str, steps: Sequence[StepResult]) -> list[str]:
         """Which steps a given patient satisfied. Shown per patient in the response."""
-        return [step.step_id for step in steps if patient_id in step.patient_ids]
+        return [
+            step.step_id
+            for step in steps
+            if step.role is not StepRole.EXCLUDE and patient_id in step.patient_ids
+        ]
 
 
 def build_matches(

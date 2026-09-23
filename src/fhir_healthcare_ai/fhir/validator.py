@@ -17,7 +17,7 @@ Two classes of problem are distinguished, because they mean different things:
 
 from __future__ import annotations
 
-from fhir_healthcare_ai.domain.enums import ResourceType, Severity
+from fhir_healthcare_ai.domain.enums import ResourceType, Severity, StepRole
 from fhir_healthcare_ai.domain.query import QueryPlan, QueryStep, SearchParam, ValidationResult
 from fhir_healthcare_ai.fhir.allowlist import (
     CLINICAL_CODE_SYSTEMS,
@@ -43,9 +43,25 @@ _CONTROL_PARAMS = frozenset(
 )
 
 # A patient-scoped search with no selective filter would stream the whole resource type.
+# Encounter `class` is the Encounter counterpart of `category` (EMER, IMP, AMB): without it
+# "which patients had an emergency visit" is unanswerable, since an Encounter has no `code`.
 _SELECTIVE_PARAMS = frozenset(
-    {"_id", "patient", "subject", "encounter", "code", "combo-code", "category", "identifier"}
+    {
+        "_id",
+        "patient",
+        "subject",
+        "encounter",
+        "code",
+        "combo-code",
+        "category",
+        "class",
+        "identifier",
+    }
 )
+
+# `analysis.options` is a free-form dict in the schema, so it is allowlisted here like
+# everything else a model writes: key -> required value type.
+_ANALYSIS_OPTIONS: dict[str, type] = {"require_abnormal": bool}
 
 
 class QueryValidator:
@@ -96,6 +112,32 @@ class QueryValidator:
                 f"Plan has {len(plan.steps)} steps; the limit is {self.max_steps}.",
                 "plan.steps",
             )
+
+        if all(step.role is StepRole.EXCLUDE for step in plan.steps):
+            result.add(
+                Severity.ERROR,
+                "exclusion-only-plan",
+                "Every step excludes patients, so there is no cohort to exclude them from. "
+                "Add a filter step that selects the population first.",
+                "plan.steps",
+            )
+
+        for key, value in plan.analysis.options.items():
+            if key not in _ANALYSIS_OPTIONS:
+                result.add(
+                    Severity.ERROR,
+                    "unknown-analysis-option",
+                    f"Analysis option {key!r} is not supported; allowed: "
+                    f"{', '.join(sorted(_ANALYSIS_OPTIONS))}.",
+                    "plan.analysis.options",
+                )
+            elif not isinstance(value, _ANALYSIS_OPTIONS[key]):
+                result.add(
+                    Severity.ERROR,
+                    "invalid-analysis-option",
+                    f"Analysis option {key!r} must be a {_ANALYSIS_OPTIONS[key].__name__}.",
+                    "plan.analysis.options",
+                )
 
         for concept_ref in plan.analysis.concepts:
             if not concept_ref.replace("_", "").isalnum():
@@ -247,7 +289,20 @@ class QueryValidator:
 
         pattern = param_policy.pattern()
         for value in param.values:
-            if not pattern.fullmatch(value):
+            system, code = self._split_token(param, param_policy, value)
+            if system is not None and not param_policy.allows_system(system):
+                allowed = ", ".join(sorted(param_policy.systems)) or "none"
+                result.add(
+                    Severity.ERROR,
+                    "system-not-allowed",
+                    (
+                        f"Code system {system!r} in value {value!r} is not permitted on "
+                        f"{resource_type.value}.{param.name} (allowed: {allowed})."
+                    ),
+                    location,
+                )
+                continue
+            if not pattern.fullmatch(code):
                 result.add(
                     Severity.ERROR,
                     "invalid-param-value",
@@ -258,7 +313,8 @@ class QueryValidator:
                     location,
                 )
                 continue
-            result = result.merge(self._check_terminology(param, param_policy, value, location))
+            scoped = param if system is None else param.model_copy(update={"system": system})
+            result = result.merge(self._check_terminology(scoped, param_policy, code, location))
 
         if param_policy.type is ParamType.QUANTITY and param.unit is None and param.values:
             result.add(
@@ -272,6 +328,26 @@ class QueryValidator:
             )
 
         return result
+
+    @staticmethod
+    def _split_token(
+        param: SearchParam, param_policy: ParamPolicy, value: str
+    ) -> tuple[str | None, str]:
+        """Split a ``system|code`` value into its parts.
+
+        The concept expander writes values this way when one concept maps to codes in
+        several systems (a diagnosis in SNOMED CT *and* ICD-10-CM), because a single
+        param-level ``system`` cannot express that. Only clinical-code token params
+        accept the form, and only without a param-level system: both at once would be
+        ambiguous. Everything else keeps the value whole, so the ``|`` fails the pattern.
+        """
+        clinical = param_policy.type is ParamType.TOKEN and bool(
+            param_policy.systems & CLINICAL_CODE_SYSTEMS
+        )
+        if not clinical or param.system is not None or "|" not in value:
+            return None, value
+        system, _, code = value.partition("|")
+        return system, code
 
     def _check_terminology(
         self, param: SearchParam, param_policy: ParamPolicy, value: str, location: str

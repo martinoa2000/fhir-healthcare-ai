@@ -69,7 +69,7 @@ packages = ["src/fhir_healthcare_ai"]
 line-length = 100
 target-version = "py311"
 src = ["src", "tests"]
-# Third-party agent skills vendored by `npx skills add`; not project code.
+# Local Claude Code configuration and any locally installed agent skills; not project code.
 extend-exclude = [".claude"]
 
 [tool.ruff.lint]

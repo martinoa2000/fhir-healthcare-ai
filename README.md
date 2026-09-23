@@ -68,6 +68,26 @@ after that. When the vLLM server is not running, the API falls back to the
 deterministic planner and `/health` reports `"status": "degraded"`, so the fallback is
 never silent.
 
+### Local model
+
+The `vllm` profile serves [Qwen3.8-27B](https://huggingface.co/Qwen/Qwen3.8-27B) in the
+FP8 weights Qwen publishes (`Qwen/Qwen3.8-27B-FP8`, Apache-2.0) with
+`vllm/vllm-openai:v0.30.0`. It needs an NVIDIA GPU with about 48 GB of memory; on an
+80 GB card, or two 48 GB cards with `--tensor-parallel-size 2`, you can use the BF16
+weights instead (`LLM_MODEL=Qwen/Qwen3.8-27B`). Qwen3.8 needs vLLM 0.17 or newer.
+Thinking mode is off, both as the server default and on every request, because the
+planner needs a JSON plan and not a chain of thought (`LLM_ENABLE_THINKING=true` turns
+it back on). The first start downloads roughly 28 GB of weights into the `hf-cache`
+volume.
+
+To serve the model yourself instead of through Compose:
+
+```bash
+vllm serve Qwen/Qwen3.8-27B-FP8 --port 8001 --max-model-len 32768 \
+  --reasoning-parser qwen3 --default-chat-template-kwargs '{"enable_thinking": false}'
+LLM_PROVIDER=vllm LLM_BASE_URL=http://localhost:8001/v1 make run
+```
+
 ## API
 
 | Method | Path | Purpose |
@@ -232,7 +252,8 @@ Everything is set through environment variables or `.env`. See
 | `FHIR_IN_MEMORY` | `false` | Serve a generated population from memory instead |
 | `FHIR_MAX_PAGE_SIZE` / `_PAGES` / `_TOTAL_RESOURCES` | 200 / 10 / 2000 | Retrieval caps |
 | `LLM_PROVIDER` | `vllm` | `vllm`, `huggingface`, `mock`, `openai`, `anthropic` |
-| `LLM_MODEL` | `Qwen/Qwen2.5-7B-Instruct` | |
+| `LLM_MODEL` | `Qwen/Qwen3.8-27B-FP8` | Hub id vLLM loads and serves. Needs vLLM 0.17+ and ~48 GB of GPU memory |
+| `LLM_ENABLE_THINKING` | `false` | Qwen3 reasoning mode for `vllm`. Off, so the planner gets a JSON plan directly |
 | `LLM_BASE_URL` | local vLLM | OpenAI-compatible endpoint for `vllm` |
 | `LLM_FALLBACK_TO_MOCK` | `true` | Degrade to the rule-based planner when the backend is down |
 | `MAX_PATIENTS_PER_RESPONSE` | 100 | Display cap. Applied after screening, never before |
@@ -308,6 +329,5 @@ project needs can be reproduced from the synthetic generator.
 
 ## License
 
-Apache License 2.0, see [LICENSE](LICENSE). Bundled third-party material (the web UI
-fonts and the Claude Code skills under `.claude/skills/`) keeps its own license, listed
-in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Apache License 2.0, see [LICENSE](LICENSE). The bundled web UI fonts keep their own
+license, listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

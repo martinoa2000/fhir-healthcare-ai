@@ -45,7 +45,9 @@ from fhir_healthcare_ai.logging_config import get_logger
 logger = get_logger(__name__)
 
 DEFAULT_VLLM_BASE_URL = "http://localhost:8001/v1"
-DEFAULT_VLLM_MODEL = "Qwen/Qwen2.5-7B-Instruct"
+#: Qwen3.8-27B in the FP8 weights Qwen publishes: Apache-2.0, fits one 48 GB GPU, and
+#: needs vLLM 0.17 or newer for its hybrid-attention kernels.
+DEFAULT_VLLM_MODEL = "Qwen/Qwen3.8-27B-FP8"
 DEFAULT_HF_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"
 
 #: vLLM's OpenAI server accepts any bearer token when started without `--api-key`.
@@ -95,6 +97,10 @@ class VLLMProvider(LLMProvider):
             "temperature": self.settings.temperature if temperature is None else temperature,
             "max_tokens": self.settings.max_tokens if max_tokens is None else max_tokens,
             "stream": False,
+            # Qwen3-family chat templates read this; vLLM passes it to the template and
+            # other OpenAI-compatible servers ignore it. Request-level, so it holds even
+            # when the server was started without a default.
+            "chat_template_kwargs": {"enable_thinking": self.settings.enable_thinking},
         }
         if json_mode:
             # vLLM implements guided decoding through this OpenAI-compatible field, so a

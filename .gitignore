@@ -56,6 +56,13 @@ htmlcov/
 .tox/
 .nox/
 
+# --- Claude Code ---------------------------------------------------------------------
+# Agent skills are installed per developer (`npx skills add`), not shipped with the repo.
+# The session hook and settings in .claude/ stay versioned.
+.claude/skills/
+.claude/settings.local.json
+skills-lock.json
+
 # --- Editors and OS ------------------------------------------------------------------
 .idea/
 .vscode/

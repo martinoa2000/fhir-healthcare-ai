@@ -12,6 +12,18 @@ All notable changes to this project are documented here. The format follows
   `CODE_OF_CONDUCT.md`, issue and pull request templates, and Dependabot updates for
   pip, GitHub Actions and Docker.
 
+### Changed
+
+- The local model is now Qwen3.8-27B (`Qwen/Qwen3.8-27B-FP8`) served by
+  `vllm/vllm-openai:v0.30.0`, replacing Qwen2.5-7B-Instruct on vLLM 0.6.3. Qwen3
+  thinking mode is off by default (`LLM_ENABLE_THINKING`), on the server and per
+  request, so the planner receives a JSON plan directly.
+
+### Removed
+
+- The vendored Claude Code design skills (`.claude/skills/`, `skills-lock.json`). They
+  were development aids, not part of the project; they are now git-ignored.
+
 ### Fixed
 
 - The deterministic planner's keyword fallbacks (reduced kidney function, abnormal

@@ -55,7 +55,7 @@ class LLMSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="LLM_", env_file=".env", extra="ignore")
 
     provider: LLMProviderName = "vllm"
-    model: str = "Qwen/Qwen2.5-7B-Instruct"
+    model: str = "Qwen/Qwen3.8-27B-FP8"
     api_key: str | None = None
     #: OpenAI-compatible endpoint for the ``vllm`` provider. Ignored by ``huggingface``,
     #: which loads the model in-process.
@@ -64,6 +64,10 @@ class LLMSettings(BaseSettings):
     max_tokens: int = Field(default=2048, ge=1)
     timeout_seconds: float = 60.0
     max_retries: int = Field(default=2, ge=0, le=5)
+    #: Qwen3-family reasoning ("thinking") for the ``vllm`` provider. Off by default: the
+    #: planner wants a JSON plan, not a chain of thought, and thinking multiplies latency
+    #: and tokens without making the validated plan any safer.
+    enable_thinking: bool = False
 
     #: When the configured local backend is unreachable, fall back to the deterministic
     #: planner instead of failing the request. On by default so that a stack started

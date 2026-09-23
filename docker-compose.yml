@@ -118,14 +118,24 @@ services:
   # ---------------------------------------------------------------------
   vllm:
     profiles: ["vllm"]
-    image: vllm/vllm-openai:v0.6.3
+    # Qwen3.8 needs vLLM 0.17+ (hybrid-attention kernels). Pinned so a rebuild is
+    # reproducible; bump deliberately.
+    image: vllm/vllm-openai:v0.30.0
     command:
       - --model
-      - ${LLM_MODEL:-Qwen/Qwen2.5-7B-Instruct}
+      - ${LLM_MODEL:-Qwen/Qwen3.8-27B-FP8}
       - --served-model-name
-      - ${LLM_MODEL:-Qwen/Qwen2.5-7B-Instruct}
+      - ${LLM_MODEL:-Qwen/Qwen3.8-27B-FP8}
+      # The planner's prompts are a few thousand tokens; a short window leaves the
+      # rest of the GPU for the KV cache and fits the FP8 weights on one 48 GB card.
       - --max-model-len
-      - "16384"
+      - "32768"
+      # Splits any reasoning out of `content`, and makes non-thinking the server
+      # default (the app also asks for it per request, see LLM_ENABLE_THINKING).
+      - --reasoning-parser
+      - qwen3
+      - --default-chat-template-kwargs
+      - '{"enable_thinking": false}'
       - --port
       - "8000"
     environment:
@@ -173,7 +183,7 @@ services:
       # deterministic planner and says so in /health rather than failing requests.
       LLM_PROVIDER: ${LLM_PROVIDER:-vllm}
       LLM_BASE_URL: ${LLM_BASE_URL:-http://vllm:8000/v1}
-      LLM_MODEL: ${LLM_MODEL:-Qwen/Qwen2.5-7B-Instruct}
+      LLM_MODEL: ${LLM_MODEL:-Qwen/Qwen3.8-27B-FP8}
       LLM_FALLBACK_TO_MOCK: ${LLM_FALLBACK_TO_MOCK:-true}
       ENVIRONMENT: local
       LOG_LEVEL: ${LOG_LEVEL:-INFO}

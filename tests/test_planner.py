@@ -147,6 +147,11 @@ def test_every_example_reaches_its_own_rule(question: str) -> None:
         "Which patients are on carbon?",
         # A unit the terminology cannot convert is refused, not read as mg/dL.
         "Which patients have LDL above 3 g/L?",
+        # A keyword fallback reads one concept; age and a second diagnosis would be lost.
+        "Which diabetic patients 65 or older have diabetic nephropathy?",
+        "Which female patients have abnormal potassium?",
+        "Which patients on metformin have elevated HbA1c?",
+        "Which patients admitted in the last year have reduced kidney function?",
     ],
 )
 def test_partially_understood_questions_are_refused(question: str) -> None:

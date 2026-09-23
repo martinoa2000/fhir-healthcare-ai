@@ -904,6 +904,16 @@ def _is_diagnosis_question(question: str) -> bool:
     return _expresses(_parse(question), {"conditions"})
 
 
+def _is_single_concept_question(question: str) -> bool:
+    """Gate for the keyword fallbacks, which read one concept and nothing else.
+
+    A question that also names an age, a sex, a drug, an encounter or several diagnoses
+    has criteria a keyword rule would silently drop, so it is refused instead.
+    """
+    f = _parse(question)
+    return not (f.ambiguous or f.demographic or f.drugs or f.encounter_classes)
+
+
 # -- builders for the parsed rules -------------------------------------------------------
 
 
@@ -1250,16 +1260,19 @@ RULES: tuple[Rule, ...] = (
         "reduced_kidney_function",
         (("kidney", "renal", "egfr", "ckd", "nephropathy"),),
         _ckd_cohort,
+        _is_single_concept_question,
     ),
     Rule(
         "abnormal_potassium",
         (("potassium", "kalemia", "electrolyte"),),
         _abnormal_potassium,
+        _is_single_concept_question,
     ),
     Rule(
         "elevated_hba1c",
         (("hba1c", "a1c", "glycated"),),
         _elevated_hba1c,
+        _is_single_concept_question,
     ),
 )
 

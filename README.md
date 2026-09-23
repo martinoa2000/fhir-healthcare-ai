@@ -114,7 +114,7 @@ threshold, which no single rule expresses, and "patients with diabetes and hyper
 needs two diagnosis steps, which one search's OR of codes cannot express.
 
 For anything else it returns `unsupported: true` with a reason instead of guessing.
-Open-ended questions need a real model (`vllm`, `huggingface`, or a hosted provider).
+Open-ended questions need the local model (`LLM_PROVIDER=vllm`).
 
 ## How a plan becomes a cohort
 
@@ -164,8 +164,9 @@ ICD-10-CM from others.
 - **Audited.** Every plan, refusal, FHIR search, analysis and response produces an
   audit event (JSONL via `AUDIT_LOG_PATH`), joined by correlation id and attributed to
   the caller's key *name* (`actor`; `anonymous` with auth off). Keys are never logged.
-- **Local by default.** The default backend is a self-hosted vLLM server. `/health`
-  reports whether inference stays on the host (`llm.local`).
+- **Local only.** The only model backend is a self-hosted vLLM server; there is no
+  hosted-API provider to misconfigure. `/health` reports the active backend and
+  `llm.local`.
 
 ## Benchmark
 
@@ -213,7 +214,7 @@ mean F1 1.0000  refusals 1.0  safety violations 0  -> PASSED
 
 The mock planner is the **control arm**. Its rules and the ground truth encode the same
 clinical readings, so a perfect score shows that the pipeline executes a correct plan
-correctly, not that the question was understood. Run the benchmark with a real provider
+correctly, not that the question was understood. Run the benchmark with `--provider vllm`
 to measure the model: any difference from the mock is attributable to the model.
 
 ## Configuration
@@ -226,7 +227,7 @@ Everything is set through environment variables or `.env`. See
 | `FHIR_BASE_URL` | `http://localhost:8080/fhir` | FHIR R4 endpoint |
 | `FHIR_IN_MEMORY` | `false` | Serve a generated population from memory instead |
 | `FHIR_MAX_PAGE_SIZE` / `_PAGES` / `_TOTAL_RESOURCES` | 200 / 10 / 2000 | Retrieval caps |
-| `LLM_PROVIDER` | `vllm` | `vllm`, `huggingface`, `mock`, `openai`, `anthropic` |
+| `LLM_PROVIDER` | `vllm` | `vllm` (local model server) or `mock` (rule-based planner). No hosted APIs |
 | `LLM_MODEL` | `Qwen/Qwen2.5-7B-Instruct` | |
 | `LLM_BASE_URL` | local vLLM | OpenAI-compatible endpoint for `vllm` |
 | `LLM_FALLBACK_TO_MOCK` | `true` | Degrade to the rule-based planner when the backend is down |
@@ -257,7 +258,7 @@ in tests too.
 src/fhir_healthcare_ai/
   api/            FastAPI app: routes, request ids, health, error mapping; web UI (static/)
   pipeline/       planner, orchestrator (the fixed workflow), response generator
-  llm/            provider interface; vllm, huggingface, mock, openai, anthropic; prompts
+  llm/            provider interface; vllm (local) and mock; prompts
   fhir/           allowlist, validator, concept expander, query builder, client, parsers,
                   in-memory test server
   normalization/  raw resources -> PatientRecord

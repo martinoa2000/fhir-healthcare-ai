@@ -1187,8 +1187,8 @@ def _unsupported(question: str) -> dict[str, Any]:
         "unsupported": True,
         "unsupported_reason": (
             f"The {MODEL_NAME} provider recognises a fixed set of question shapes and this "
-            "is not one of them. Start the local model (docker compose --profile vllm up, or "
-            "LLM_PROVIDER=huggingface) for open-ended questions."
+            "is not one of them. Start the local model (docker compose --profile vllm up) "
+            "for open-ended questions."
         ),
     }
 

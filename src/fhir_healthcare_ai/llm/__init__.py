@@ -1,10 +1,10 @@
 """LLM abstraction.
 
 The model is a component, not the architecture. Everything above this package talks to
-:class:`LLMProvider`, so the backend is an environment variable: a local vLLM server, a
-HuggingFace model in-process, the deterministic rule-based planner, or a hosted API.
+:class:`LLMProvider`, so the backend is an environment variable: a local vLLM server,
+or the deterministic rule-based planner. No hosted API is supported.
 
-Default is local inference. See :mod:`fhir_healthcare_ai.llm.local`.
+Inference is always local. See :mod:`fhir_healthcare_ai.llm.local`.
 """
 
 from fhir_healthcare_ai.llm.base import (
@@ -24,14 +24,13 @@ from fhir_healthcare_ai.llm.factory import (
     is_local,
     resolve_provider,
 )
-from fhir_healthcare_ai.llm.local import HuggingFaceProvider, VLLMProvider
+from fhir_healthcare_ai.llm.local import VLLMProvider
 from fhir_healthcare_ai.llm.mock import MockLLMProvider, plan_for
 from fhir_healthcare_ai.llm.prompts import build_narrative_prompt, build_planning_prompt
 
 __all__ = [
     "LOCAL_PROVIDERS",
     "PROVIDERS",
-    "HuggingFaceProvider",
     "LLMError",
     "LLMMessage",
     "LLMProvider",

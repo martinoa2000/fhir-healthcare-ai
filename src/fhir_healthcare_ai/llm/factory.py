@@ -1,8 +1,10 @@
 """Provider selection.
 
 One function, one dict. The rest of the codebase asks for "the configured provider" and
-never learns which one it got, which is the only reason swapping vLLM for a hosted API
-is a one-line environment change rather than a refactor.
+never learns which one it got. There are two: ``vllm``, a locally hosted model server,
+and ``mock``, the deterministic rule-based planner used by CI and as the fallback when
+the server is down. No hosted API is supported, so question text never leaves the
+deployment boundary.
 
 The registry is keyed by the literal values of
 :data:`~fhir_healthcare_ai.config.LLMProviderName`, so adding a backend means adding it
@@ -16,7 +18,7 @@ from dataclasses import dataclass
 
 from fhir_healthcare_ai.config import LLMProviderName, LLMSettings, get_settings
 from fhir_healthcare_ai.llm.base import LLMProvider, LLMUnavailableError
-from fhir_healthcare_ai.llm.local import HuggingFaceProvider, VLLMProvider
+from fhir_healthcare_ai.llm.local import VLLMProvider
 from fhir_healthcare_ai.llm.mock import MODEL_NAME as MOCK_MODEL_NAME
 from fhir_healthcare_ai.llm.mock import MockLLMProvider
 from fhir_healthcare_ai.logging_config import get_logger
@@ -26,29 +28,14 @@ logger = get_logger(__name__)
 ProviderFactory = Callable[[LLMSettings], LLMProvider]
 
 
-def _openai(settings: LLMSettings) -> LLMProvider:
-    from fhir_healthcare_ai.llm.openai_provider import OpenAIProvider
-
-    return OpenAIProvider(settings)
-
-
-def _anthropic(settings: LLMSettings) -> LLMProvider:
-    from fhir_healthcare_ai.llm.anthropic_provider import AnthropicProvider
-
-    return AnthropicProvider(settings)
-
-
 PROVIDERS: dict[str, ProviderFactory] = {
     "vllm": lambda settings: VLLMProvider(settings),
-    "huggingface": lambda settings: HuggingFaceProvider(settings),
     "mock": lambda _: MockLLMProvider(),
-    "openai": _openai,
-    "anthropic": _anthropic,
 }
 
 #: Backends that keep inference inside the deployment boundary. Surfaced by the API so
 #: an operator can see at a glance whether question text is leaving the host.
-LOCAL_PROVIDERS: frozenset[str] = frozenset({"vllm", "huggingface", "mock"})
+LOCAL_PROVIDERS: frozenset[str] = frozenset({"vllm", "mock"})
 
 
 def build_provider(
@@ -62,7 +49,7 @@ def build_provider(
 
     Raises:
         LLMUnavailableError: The name is not registered, or the backend is installed but
-            unusable (missing package, missing key, unreachable server).
+            unusable.
     """
     resolved = settings or get_settings().llm
     provider_name = name or resolved.provider
@@ -75,8 +62,8 @@ def build_provider(
     try:
         provider = factory(resolved)
     except LLMUnavailableError:
-        # A missing package or key is a configuration problem, not a request failure, so
-        # it is worth degrading rather than returning 500 for every question. The
+        # A backend that cannot be built is a configuration problem, not a request
+        # failure, so it is worth degrading rather than returning 500 for every question. The
         # substitution is logged loudly and reported by /health, never hidden.
         if not (resolved.fallback_to_mock and name is None and provider_name != "mock"):
             raise

@@ -20,7 +20,7 @@ audit*.log
 benchmark-results/
 
 # --- Local model weights -------------------------------------------------------------
-# The HuggingFace provider caches multi-gigabyte checkpoints. Keep them out of the repo.
+# vLLM and the Hub cache multi-gigabyte checkpoints. Keep them out of the repo.
 models/
 .cache/
 *.safetensors

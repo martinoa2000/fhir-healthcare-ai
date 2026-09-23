@@ -55,7 +55,7 @@ class LLMSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="LLM_", env_file=".env", extra="ignore")
 
     provider: LLMProviderName = "vllm"
-    model: str = "Qwen/Qwen3.8-27B-FP8"
+    model: str = "mlx-community/Qwen3.5-9B-MLX-4bit"
     #: Bearer token, only for a vLLM server started with ``--api-key``.
     api_key: str | None = None
     #: OpenAI-compatible endpoint of the local vLLM server.

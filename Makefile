@@ -9,11 +9,14 @@ COMPOSE ?= docker compose
 
 # Where the local (non-container) commands expect HAPI to be listening.
 FHIR_BASE_URL ?= http://localhost:8080/fhir
+# Model served by `make serve-model`, and the port the app expects it on.
+LLM_MODEL     ?= mlx-community/Qwen3.5-9B-MLX-4bit
+VLLM_PORT     ?= 8001
 PATIENTS      ?= 120
 SEED          ?= 42
 
 .PHONY: help install lint format typecheck check test test-integration test-all cov \
-        run demo seed bench up down down-volumes logs clean
+        run demo serve-model seed bench up down down-volumes logs clean
 
 help: ## Show this help
 	@echo "fhir-healthcare-ai - available targets:"
@@ -63,6 +66,10 @@ demo: ## Run the API on an in-memory synthetic population: no Docker, no model, 
 
 run: ## Run the API locally with auto-reload on http://127.0.0.1:8000
 	uvicorn fhir_healthcare_ai.api.main:app --reload --host 127.0.0.1 --port 8000
+
+serve-model: ## Serve the local model with vLLM (vllm-metal on a Mac) on port 8001
+	vllm serve $(LLM_MODEL) --port $(VLLM_PORT) --max-model-len 16384 \
+		--reasoning-parser qwen3 --default-chat-template-kwargs '{"enable_thinking": false}'
 
 seed: ## Load synthetic patients into the FHIR server (idempotent, PUT-based)
 	fhir-ai-seed --push --wait-for-server \

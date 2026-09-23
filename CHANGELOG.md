@@ -15,8 +15,10 @@ First public version.
 - Governed question-to-cohort pipeline over HL7 FHIR R4: LLM planner emitting a
   structured `QueryPlan`, concept expander, allowlist validator, deterministic query
   builder and read-only FHIR client.
-- Local-only inference: a self-hosted vLLM server serving Qwen3.8-27B
-  (`Qwen/Qwen3.8-27B-FP8`, `vllm/vllm-openai:v0.30.0`) with thinking mode off, and a
+- Local-only inference: a self-hosted vLLM server serving Qwen3.5-9B with thinking mode
+  off. On a 16 GB Apple Silicon Mac, vllm-metal serves the 4-bit MLX weights
+  (`mlx-community/Qwen3.5-9B-MLX-4bit`, `make serve-model`); the compose `vllm`
+  profile serves the original weights on a 24 GB NVIDIA GPU. Also included is a
   deterministic rule-based planner used by CI and as an automatic, reported fallback.
   No hosted-API provider exists, so question text never leaves the deployment.
 - The rule-based planner refuses any question with a criterion it cannot express,

@@ -14,7 +14,11 @@ keywords = ["fhir", "hl7", "healthcare", "interoperability", "llm", "clinical-nl
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Healthcare Industry",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Medical Science Apps.",
 ]
 
@@ -56,6 +60,7 @@ fhir-ai-bench = "fhir_healthcare_ai.benchmark.cli:main"
 [project.urls]
 Homepage = "https://github.com/martinoa2000/fhir-healthcare-ai"
 Issues = "https://github.com/martinoa2000/fhir-healthcare-ai/issues"
+Changelog = "https://github.com/martinoa2000/fhir-healthcare-ai/blob/main/CHANGELOG.md"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/fhir_healthcare_ai"]

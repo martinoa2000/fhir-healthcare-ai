@@ -1,5 +1,10 @@
 # fhir-healthcare-ai
 
+[![CI](https://github.com/martinoa2000/fhir-healthcare-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/martinoa2000/fhir-healthcare-ai/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)
+![FHIR R4](https://img.shields.io/badge/HL7%20FHIR-R4-orange.svg)
+
 A governed AI layer over interoperable clinical data (HL7 FHIR R4).
 
 A clinician asks a question in plain language. A language model turns it into a
@@ -290,7 +295,19 @@ src/fhir_healthcare_ai/
 - A birth date recorded to the year only is matched the way FHIR date search matches
   ranges: a patient born "1961" counts as older than 65 on 2026-06-01, because some day
   in 1961 qualifies. The benchmark oracle applies the same reading.
-- The deterministic planner's older keyword rules still fire on one word. "Which diabetic
-  patients 65 or older have diabetic nephropathy?" names two diagnoses and an age, which
-  the parsed rules decline, and it then falls through to the `nephropathy` keyword of the
-  reduced-kidney-function rule rather than to a refusal.
+
+## Contributing and security
+
+Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md) and the
+[code of conduct](CODE_OF_CONDUCT.md). Report vulnerabilities privately as described in
+[SECURITY.md](SECURITY.md), never in a public issue. Notable changes are listed in
+[CHANGELOG.md](CHANGELOG.md).
+
+Never open an issue or pull request that contains real patient data. Everything this
+project needs can be reproduced from the synthetic generator.
+
+## License
+
+Apache License 2.0, see [LICENSE](LICENSE). Bundled third-party material (the web UI
+fonts and the Claude Code skills under `.claude/skills/`) keeps its own license, listed
+in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

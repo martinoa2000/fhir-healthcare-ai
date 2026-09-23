@@ -57,7 +57,7 @@ def test_every_referenced_asset_resolves(api: TestClient) -> None:
     html = api.get("/").text
     referenced = re.findall(r'(?:src|href)="(/ui/[^"]+)"', html)
     assert {"/ui/app.js", "/ui/app.css"} <= set(referenced)
-    expected_types = {".js": "text/javascript", ".css": "text/css"}
+    expected_types = {".js": "text/javascript", ".css": "text/css", ".woff2": "font/woff2"}
     for path in referenced:
         response = api.get(path)
         assert response.status_code == 200, path
@@ -83,7 +83,7 @@ def test_unknown_assets_are_404(api: TestClient, path: str) -> None:
 def test_assets_are_packaged_with_the_module() -> None:
     """The wheel ships whatever lives in the package directory; the router reads it there."""
     static = resources.files("fhir_healthcare_ai.api").joinpath("static")
-    for name in ("index.html", "app.js", "app.css"):
+    for name in ("index.html", "app.js", "app.css", "atkinson-next.woff2", "atkinson-mono.woff2"):
         assert static.joinpath(name).is_file(), name
 
 
@@ -102,3 +102,21 @@ def test_api_routes_are_unaffected(api: TestClient) -> None:
     assert body["patients"] and body["disclaimer"]
     assert api.get("/patient/syn7-pat-0001/analyze").status_code == 200
     assert api.get("/docs").status_code == 200
+
+
+def test_fonts_are_bundled_and_allowed_by_the_csp(api: TestClient) -> None:
+    css = api.get("/ui/app.css").text
+    fonts = re.findall(r'url\("(/ui/[^"]+\.woff2)"\)', css)
+    assert fonts
+    for path in fonts:
+        response = api.get(path)
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "font/woff2"
+        assert response.content[:4] == b"wOF2"
+    assert "font-src 'self'" in response.headers["content-security-policy"]
+
+
+def test_page_keeps_style_out_of_attributes() -> None:
+    """Widths are set through the CSSOM, because the CSP forbids inline style attributes."""
+    js = resources.files("fhir_healthcare_ai.api").joinpath("static", "app.js").read_text()
+    assert 'setAttribute("style"' not in js and ".style.cssText" not in js

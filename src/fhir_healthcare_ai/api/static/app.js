@@ -1,131 +1,144 @@
-// fhir-healthcare-ai browser UI.
-//
-// Plain DOM code, no framework and no build step. Every value that comes from the API is
-// inserted with textContent or as an attribute through el(); nothing from a response is
-// ever parsed as HTML. The Content-Security-Policy set by the server backs this up.
 "use strict";
 
-const FALLBACK_DISCLAIMER =
-  "Research and engineering demonstration only. Outputs are not validated for clinical " +
-  "use and must not be used to make or support decisions about the care of any person.";
+/*
+ * Cohort Explorer: a thin client over the public API.
+ *
+ * Every value that came from the server reaches the page through textContent or an
+ * attribute set by createElement -- never through HTML parsing -- so a patient id or a
+ * narrative cannot inject markup. The server's CSP is the second line of defence.
+ */
 
-// ---------------------------------------------------------------------------- helpers
+// ---------------------------------------------------------------------------- dom
 
-/** Create an element. `props` sets properties (className, type, ...); children may be
- *  nodes, strings (inserted as text) or null/undefined (skipped). */
+const SVG_NS = "http://www.w3.org/2000/svg";
+
 function el(tag, props, ...children) {
   const node = document.createElement(tag);
-  if (props) {
-    for (const [key, value] of Object.entries(props)) {
-      if (value === undefined || value === null) continue;
-      if (key === "dataset") Object.assign(node.dataset, value);
-      else if (key.startsWith("on")) node.addEventListener(key.slice(2), value);
-      else if (key in node) node[key] = value;
-      else node.setAttribute(key, String(value));
-    }
+  applyProps(node, props);
+  appendAll(node, children);
+  return node;
+}
+
+function svg(tag, attrs, ...children) {
+  const node = document.createElementNS(SVG_NS, tag);
+  for (const [key, value] of Object.entries(attrs || {})) {
+    if (value !== undefined && value !== null) node.setAttribute(key, String(value));
   }
+  appendAll(node, children);
+  return node;
+}
+
+function applyProps(node, props) {
+  for (const [key, value] of Object.entries(props || {})) {
+    if (value === undefined || value === null || value === false) continue;
+    if (key === "className") node.className = value;
+    else if (key === "text") node.textContent = value;
+    else if (key.startsWith("on") && typeof value === "function") {
+      node.addEventListener(key.slice(2), value);
+    } else if (key in node && typeof value !== "string") node[key] = value;
+    else node.setAttribute(key, value === true ? "" : String(value));
+  }
+}
+
+function appendAll(node, children) {
   for (const child of children.flat()) {
     if (child === undefined || child === null || child === false) continue;
     node.append(child instanceof Node ? child : document.createTextNode(String(child)));
   }
+}
+
+// Like Element.append, but skips false/null/undefined so conditionals can be inlined.
+function put(node, ...children) {
+  appendAll(node, children);
   return node;
 }
 
 function clear(node) {
-  node.replaceChildren();
+  while (node.firstChild) node.removeChild(node.firstChild);
   return node;
 }
 
-function fmtDate(value) {
-  if (!value) return "";
-  const d = new Date(value);
-  return Number.isNaN(d.getTime()) ? String(value) : d.toISOString().slice(0, 10);
+const $ = (id) => document.getElementById(id);
+
+// ---------------------------------------------------------------------------- format
+
+const integerFormat = new Intl.NumberFormat();
+
+function fmt(value, digits = 1) {
+  if (value === null || value === undefined || Number.isNaN(value)) return "-";
+  if (typeof value !== "number") return String(value);
+  if (Number.isInteger(value)) return integerFormat.format(value);
+  return new Intl.NumberFormat(undefined, { maximumFractionDigits: digits }).format(value);
 }
 
-function fmtNumber(value, digits = 1) {
-  if (value === null || value === undefined || value === "") return "";
-  const n = Number(value);
-  return Number.isFinite(n) ? n.toFixed(digits).replace(/\.0+$/, "") : String(value);
+function fmtDate(iso) {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return String(iso);
+  return date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
 
-function fmtValue(value) {
-  if (value === null || value === undefined) return "—";
-  if (typeof value === "boolean") return value ? "yes" : "no";
-  if (typeof value === "number") return Number.isInteger(value) ? String(value) : fmtNumber(value, 2);
-  if (Array.isArray(value)) return value.length ? value.map(fmtValue).join(", ") : "—";
-  if (typeof value === "object") return JSON.stringify(value);
-  return String(value);
+function fmtAge(years) {
+  return years === null || years === undefined ? "-" : `${Math.floor(years)}`;
 }
 
-function table(headers, rows) {
-  return el(
-    "div",
-    { className: "table-wrap" },
-    el(
-      "table",
-      null,
-      el("thead", null, el("tr", null, headers.map((h) => el("th", { scope: "col" }, h)))),
-      el("tbody", null, rows),
-    ),
-  );
+function sexLabel(gender) {
+  if (!gender) return "-";
+  return gender.charAt(0).toUpperCase() + gender.slice(1);
 }
 
-function callout(kind, title, items) {
-  const box = el("div", { className: `callout ${kind}`, role: kind === "error" ? "alert" : null });
-  if (title) box.append(el("strong", null, title));
-  if (items && items.length) box.append(el("ul", null, items.map((i) => el("li", null, i))));
-  return box;
+function plural(count, one, many) {
+  return `${integerFormat.format(count)} ${count === 1 ? one : many}`;
 }
 
-function disclaimer(text) {
-  return el("p", { className: "fine" }, text || FALLBACK_DISCLAIMER);
+// ---------------------------------------------------------------------------- api
+
+const KEY_STORAGE = "cohort-explorer-api-key";
+const RECENT_STORAGE = "cohort-explorer-recent";
+
+function readStorage(store, key, fallback) {
+  try {
+    const raw = store.getItem(key);
+    return raw === null ? fallback : JSON.parse(raw);
+  } catch (_) {
+    return fallback;
+  }
 }
 
-/** Turn a FastAPI error body into readable lines. `detail` is a string for errors the
- *  API raises itself, and a list of {loc, msg} objects for request validation errors. */
+function writeStorage(store, key, value) {
+  try {
+    if (value === null) store.removeItem(key);
+    else store.setItem(key, JSON.stringify(value));
+  } catch (_) {
+    /* private mode or storage disabled: keep the value in memory only */
+  }
+}
+
+let apiKey = readStorage(sessionStorage, KEY_STORAGE, "") || "";
+
+class ApiError extends Error {
+  constructor(status, lines, requestId) {
+    super(lines.join("; "));
+    this.status = status;
+    this.lines = lines;
+    this.requestId = requestId;
+  }
+}
+
 function errorLines(body, status) {
   const detail = body && body.detail;
   if (typeof detail === "string") return [detail];
   if (Array.isArray(detail)) {
-    return detail.map((d) => {
-      const loc = Array.isArray(d.loc) ? d.loc.filter((p) => p !== "body").join(".") : "";
-      return loc ? `${loc}: ${d.msg}` : String(d.msg || JSON.stringify(d));
+    return detail.map((item) => {
+      const where = Array.isArray(item.loc) ? item.loc.filter((p) => p !== "body").join(".") : "";
+      return where ? `${where}: ${item.msg}` : String(item.msg || item);
     });
   }
-  return [`HTTP ${status}`];
+  if (status === 0) return ["The server could not be reached."];
+  return [`The server answered ${status}.`];
 }
 
-class ApiError extends Error {
-  constructor(status, lines, correlationId) {
-    super(lines.join("; "));
-    this.status = status;
-    this.lines = lines;
-    this.correlationId = correlationId;
-  }
-}
-
-// The API key lives in sessionStorage: it survives a reload but not the tab, and is never
-// written into the page. Storage can be unavailable (private mode), so every access is
-// guarded and the key then simply lasts until reload.
-const KEY_STORAGE = "fhir-ai-api-key";
-let apiKey = "";
-try {
-  apiKey = sessionStorage.getItem(KEY_STORAGE) || "";
-} catch (_) {
-  apiKey = "";
-}
-
-function setApiKey(value) {
-  apiKey = value.trim();
-  try {
-    if (apiKey) sessionStorage.setItem(KEY_STORAGE, apiKey);
-    else sessionStorage.removeItem(KEY_STORAGE);
-  } catch (_) {
-    /* storage unavailable: keep it in memory only */
-  }
-}
-
-async function api(path, options = {}) {
+async function request(path, options = {}) {
   const headers = { accept: "application/json", ...(options.headers || {}) };
   if (apiKey) headers["X-API-Key"] = apiKey;
   let response;
@@ -134,380 +147,991 @@ async function api(path, options = {}) {
   } catch (err) {
     throw new ApiError(0, [`Network error: ${err.message}`], null);
   }
-  let body = null;
-  try {
-    body = await response.json();
-  } catch (_) {
-    body = null;
-  }
   if (!response.ok) {
+    let body = null;
+    try {
+      body = await response.json();
+    } catch (_) {
+      body = null;
+    }
     const id = (body && body.correlation_id) || response.headers.get("X-Request-ID");
+    if (response.status === 401) onUnauthorized();
     throw new ApiError(response.status, errorLines(body, response.status), id);
   }
-  return body;
+  return response;
 }
 
-function renderError(target, err) {
-  const title =
-    err.status === 422 ? "The request could not be answered (422)"
-    : err.status === 503 ? "A dependency is unavailable (503)"
-    : err.status === 404 ? "Not found (404)"
-    : err.status ? `Request failed (${err.status})`
-    : "Request failed";
-  const box = callout("error", title, err.lines || [String(err)]);
-  if (err.correlationId) box.append(el("div", { className: "meta" }, `request id ${err.correlationId}`));
-  clear(target).append(box, disclaimer());
+async function api(path, options) {
+  const response = await request(path, options);
+  return response.json();
 }
 
-async function withBusy(button, target, work) {
-  button.disabled = true;
-  clear(target).append(el("p", { className: "muted" }, "Working…"));
+// ---------------------------------------------------------------------------- state
+
+const state = {
+  lastBody: null,
+  response: null,
+  analyses: new Map(),
+  sort: { key: "patient_id", dir: 1 },
+  filter: "",
+  queryRun: 0,
+};
+
+// ---------------------------------------------------------------------------- status
+
+const WARNING_ICON = () =>
+  svg("svg", { viewBox: "0 0 24 24", "aria-hidden": "true" },
+    svg("path", { d: "M12 3l10 18H2L12 3z" }),
+    svg("path", { d: "M12 10v5M12 18h.01" }));
+
+async function loadStatus() {
+  const box = $("status");
   try {
-    await work();
-  } catch (err) {
-    renderError(target, err);
-  } finally {
-    button.disabled = false;
-  }
-}
-
-// ----------------------------------------------------------------------------- health
-
-async function loadHealth() {
-  const box = document.getElementById("health");
-  try {
-    const h = await api("/health");
-    const statusKind = h.status === "ok" ? "ok" : h.status === "degraded" ? "warn" : "bad";
-    const badges = [
-      el("span", { className: `badge ${statusKind}`, title: `version ${h.version}` }, h.status),
-      el(
-        "span",
-        { className: `badge ${h.fhir.reachable ? "ok" : "bad"}`, title: h.fhir.base_url },
-        `FHIR ${h.fhir.reachable ? "reachable" : "unreachable"}${h.fhir.in_memory ? " (in-memory)" : ""}`,
-      ),
-      el(
-        "span",
-        { className: "badge", title: `configured: ${h.llm.configured}` },
-        `LLM ${h.llm.active} · ${h.llm.model}${h.llm.local ? " · local" : " · hosted"}`,
-      ),
+    const health = await api("/health");
+    const fhirOk = health.fhir.reachable;
+    const items = [
+      el("span", { className: "status-item", title: health.fhir.base_url },
+        el("span", { className: `status-dot ${fhirOk ? "ok" : "bad"}`, "aria-hidden": "true" }),
+        fhirOk
+          ? `FHIR server connected${health.fhir.in_memory ? " (in-memory demo data)" : ""}`
+          : "FHIR server unreachable"),
+      el("span", { className: "status-item", title: `configured: ${health.llm.configured}` },
+        `Planner: ${health.llm.model}${health.llm.local ? ", runs locally" : ", hosted"}`),
     ];
-    if (h.llm.fallback) {
-      badges.push(
-        el(
-          "span",
-          { className: "badge warn", title: h.llm.reason || "" },
-          `degraded: fallback from ${h.llm.configured} to ${h.llm.active}`,
-        ),
-      );
+    if (health.llm.fallback) {
+      items.push(el("span", { className: "status-flag", title: health.llm.reason || "" },
+        WARNING_ICON(),
+        `Using the rule-based planner: ${health.llm.configured} is unavailable`));
     }
-    clear(box).append(...badges);
+    put(clear(box), ...items);
   } catch (err) {
-    clear(box).append(el("span", { className: "badge bad", title: err.message }, "API unreachable"));
+    const locked = err.status === 401;
+    put(clear(box), el("span", { className: "status-item" },
+      el("span", { className: "status-dot bad", "aria-hidden": "true" }),
+      locked ? "An API key is required" : "The API is unreachable"));
   }
 }
 
-// ------------------------------------------------------------------------------ query
+function onUnauthorized() {
+  const dialog = $("access-dialog");
+  $("access-reason").textContent =
+    "This server requires an API key. Enter the key you were given; it stays in this " +
+    "browser tab and is sent as X-API-Key.";
+  if (!dialog.open) dialog.showModal();
+}
 
-async function loadExamples() {
-  const box = document.getElementById("examples");
+function setupAccess() {
+  const dialog = $("access-dialog");
+  const input = $("api-key");
+  $("access-button").addEventListener("click", () => {
+    input.value = apiKey;
+    dialog.showModal();
+    input.focus();
+  });
+  $("key-form").addEventListener("submit", () => {
+    apiKey = input.value.trim();
+    writeStorage(sessionStorage, KEY_STORAGE, apiKey || null);
+    toast(apiKey ? "API key saved for this tab" : "API key cleared");
+    loadStatus();
+    loadLibrary();
+  });
+  $("key-clear").addEventListener("click", () => {
+    apiKey = "";
+    input.value = "";
+    writeStorage(sessionStorage, KEY_STORAGE, null);
+    dialog.close();
+    toast("API key cleared");
+    loadStatus();
+  });
+}
+
+// ---------------------------------------------------------------------------- library
+
+const TOPICS = [
+  ["A single patient", /summari[sz]e|record of patient/i],
+  ["Visits and admissions", /emergency|admitted|admission|visit/i],
+  ["Kidney", /kidney|renal|egfr|ckd|nephro/i],
+  ["Heart and blood pressure", /blood pressure|hypertens|antihypertens|heart|ldl|cholesterol/i],
+  ["Diabetes", /diabet|hba1c|insulin|metformin|sglt2|glucose/i],
+];
+
+function topicOf(question) {
+  for (const [name, pattern] of TOPICS) if (pattern.test(question)) return name;
+  return "Labs and medications";
+}
+
+async function loadLibrary() {
+  const box = $("library");
+  let questions = [];
   try {
-    const caps = await api("/capabilities");
-    const question = document.getElementById("question");
-    clear(box).append(
-      ...(caps.example_questions || []).map((q) =>
-        el(
-          "button",
-          {
-            type: "button",
-            className: "chip",
-            onclick: () => {
-              question.value = q;
-              question.focus();
-            },
-          },
-          q,
-        ),
-      ),
-    );
+    questions = (await api("/capabilities")).example_questions || [];
   } catch (_) {
     clear(box);
+    return;
   }
+  const groups = new Map();
+  for (const question of questions) {
+    const topic = topicOf(question);
+    if (!groups.has(topic)) groups.set(topic, []);
+    groups.get(topic).push(question);
+  }
+  const order = [...TOPICS.map(([name]) => name), "Labs and medications"];
+  put(clear(box), 
+    ...order.filter((name) => groups.has(name)).map((name) =>
+      el("div", { className: "library-group" },
+        el("h3", { text: name }),
+        el("ul", null, groups.get(name).map((q) =>
+          el("li", null, el("button", {
+            type: "button",
+            className: "question-link",
+            text: q,
+            onclick: () => runFromLibrary(q),
+          })))))));
 }
 
-function evidenceTable(evidence) {
-  if (!evidence || !evidence.length) return el("p", { className: "muted" }, "No evidence attached.");
-  return table(
-    ["Resource", "Display", "Value", "Date"],
-    evidence.map((e) =>
-      el(
-        "tr",
-        null,
-        el("td", { className: "mono" }, `${e.resource_type}/${e.resource_id}`),
-        el("td", null, e.display || e.concept || "", e.note ? el("div", { className: "meta" }, e.note) : null),
-        el("td", null, e.value || ""),
-        el("td", null, fmtDate(e.effective)),
-      ),
-    ),
-  );
+function runFromLibrary(question) {
+  $("question").value = question;
+  $("query-form").requestSubmit();
 }
 
-function patientsTable(patients) {
-  const rows = [];
-  for (const p of patients) {
-    const detail = el(
-      "tr",
-      { className: "detail", hidden: true },
-      el("td", { colSpan: 5 }, p.summary ? el("p", null, p.summary) : null, evidenceTable(p.evidence)),
-    );
-    const toggle = el(
-      "button",
-      {
-        type: "button",
-        className: "link",
-        "aria-expanded": "false",
-        title: "Show evidence",
-        onclick: () => {
-          detail.hidden = !detail.hidden;
-          toggle.setAttribute("aria-expanded", String(!detail.hidden));
-          toggle.textContent = detail.hidden ? "▸" : "▾";
-        },
-      },
-      "▸",
-    );
-    const analyse = el(
-      "button",
-      { type: "button", className: "link", onclick: () => analysePatient(p.patient_id) },
-      "analyse",
-    );
-    rows.push(
-      el(
-        "tr",
-        null,
-        el("td", null, toggle),
-        el("td", { className: "mono" }, p.patient_id, " ", analyse),
-        el("td", null, fmtNumber(p.age_years, 0)),
-        el("td", null, p.gender || ""),
-        el("td", null, (p.matched_steps || []).join(", ")),
-      ),
-      detail,
-    );
+function renderRecent() {
+  const recent = readStorage(localStorage, RECENT_STORAGE, []);
+  const box = $("recent");
+  if (!Array.isArray(recent) || recent.length === 0) {
+    box.hidden = true;
+    return;
   }
-  return table(["", "Patient", "Age", "Gender", "Matched steps"], rows);
+  box.hidden = false;
+  put(clear(box), 
+    el("h3", { text: "Recent questions" }),
+    el("ul", null, recent.map((q) =>
+      el("li", null, el("button", {
+        type: "button", className: "question-link", text: q, onclick: () => runFromLibrary(q),
+      })))));
 }
 
-function renderQuery(target, r) {
-  const plan = r.query_plan || {};
-  const out = [];
-
-  if (plan.unsupported) {
-    out.push(
-      callout("warn", "This question is outside what the system can answer safely.", [
-        plan.unsupported_reason || "No reason was given.",
-      ]),
-    );
-  }
-
-  if (r.narrative) out.push(el("h3", null, "Answer"), el("p", { className: "narrative" }, r.narrative));
-
-  const issues = (r.validation_issues || []).map(
-    (i) => `${i.severity}: ${i.message}${i.location ? ` (${i.location})` : ""}`,
-  );
-  if (r.warnings && r.warnings.length) out.push(callout("warn", "Warnings", r.warnings));
-  if (issues.length) out.push(callout("warn", "Validation", issues));
-  if (plan.assumptions && plan.assumptions.length) {
-    out.push(callout("info", "Assumptions", plan.assumptions));
-  }
-
-  const cohort = r.cohort || {};
-  const trace = r.trace || {};
-  const meta = [
-    `${cohort.total_patients ?? (r.patients || []).length} patients`,
-    `${cohort.total_resources ?? 0} resources`,
-    plan.intent ? `intent ${plan.intent}` : null,
-    r.analysis_type && r.analysis_type !== "none" ? `analysis ${r.analysis_type}` : null,
-    trace.fhir_requests !== undefined ? `${trace.fhir_requests} FHIR requests` : null,
-    trace.llm_calls !== undefined ? `${trace.llm_calls} LLM calls` : null,
-    trace.truncated ? "truncated" : null,
-  ].filter(Boolean);
-  if (!plan.unsupported) out.push(el("p", { className: "meta" }, meta.join(" · ")));
-
-  if (r.fhir_queries && r.fhir_queries.length) {
-    out.push(
-      el("h3", null, "FHIR queries executed"),
-      el("ul", { className: "queries" }, r.fhir_queries.map((q) => el("li", { className: "mono" }, q))),
-    );
-  }
-
-  if (r.patients && r.patients.length) {
-    out.push(el("h3", null, "Patients"), patientsTable(r.patients));
-  } else if (!plan.unsupported) {
-    out.push(el("p", { className: "muted" }, "No patients matched."));
-  }
-
-  // A single-patient question (a record summary) gets its analysis inline; for a cohort
-  // the per-patient analysis is one click away ("analyse") instead of a wall of tables.
-  if (r.analyses && r.analyses.length === 1) {
-    const a = r.analyses[0];
-    out.push(el("h3", null, `Analysis · ${a.patient_id}`), analysisBody(a));
-  }
-
-  if (trace.correlation_id) out.push(el("p", { className: "meta" }, `request id ${trace.correlation_id}`));
-  out.push(disclaimer(r.disclaimer));
-  clear(target).append(...out);
+function remember(question) {
+  const recent = readStorage(localStorage, RECENT_STORAGE, []);
+  const list = [question, ...(Array.isArray(recent) ? recent : []).filter((q) => q !== question)];
+  writeStorage(localStorage, RECENT_STORAGE, list.slice(0, 6));
+  renderRecent();
 }
+
+// ---------------------------------------------------------------------------- query
 
 function setupQueryForm() {
-  const form = document.getElementById("query-form");
-  const target = document.getElementById("query-result");
-  const button = document.getElementById("query-submit");
+  const form = $("query-form");
+  const question = $("question");
   form.addEventListener("submit", (event) => {
     event.preventDefault();
-    const body = {
-      question: document.getElementById("question").value.trim(),
-      narrate: document.getElementById("narrate").checked,
-    };
-    const asOf = document.getElementById("as-of").value;
+    const text = question.value.trim();
+    if (text.length < 3) {
+      question.focus();
+      return;
+    }
+    const body = { question: text, narrate: $("narrate").checked };
+    const asOf = $("as-of").value;
     if (asOf) body.as_of = asOf;
-    withBusy(button, target, async () => {
-      const r = await api("/query", {
-        method: "POST",
-        headers: { "content-type": "application/json", accept: "application/json" },
-        body: JSON.stringify(body),
-      });
-      renderQuery(target, r);
-    });
+    runQuery(body);
+  });
+  question.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      form.requestSubmit();
+    }
   });
 }
 
-// ---------------------------------------------------------------------------- patient
+async function runQuery(body) {
+  const run = ++state.queryRun;
+  state.lastBody = body;
+  state.filter = "";
+  $("filter").value = "";
+  writeUrl(body);
+  remember(body.question);
 
-function analysisBody(a) {
-  const parts = [];
-  parts.push(
-    el(
-      "dl",
-      { className: "kv" },
-      el("dt", null, "Age"),
-      el("dd", null, fmtNumber(a.age_years, 0) || "—"),
-      el("dt", null, "Gender"),
-      el("dd", null, a.gender || "—"),
-    ),
-  );
+  const button = $("run");
+  button.disabled = true;
+  button.textContent = "Running";
+  document.querySelector(".ask").classList.add("compact");
+  showLoading(body.question);
 
-  const risk = a.risk;
-  if (risk) {
-    const kind = risk.band === "high" ? "bad" : risk.band === "moderate" ? "warn" : "ok";
-    parts.push(
-      el("h3", null, "Risk"),
-      el(
-        "p",
-        null,
-        el("span", { className: `badge ${kind}` }, `${risk.band}`),
-        ` score ${fmtNumber(risk.score, 2)} · ${risk.model_name} ${risk.model_version}`,
-      ),
-    );
-    if (risk.contributing_factors && risk.contributing_factors.length) {
-      parts.push(callout("info", "Contributing factors", risk.contributing_factors));
-    }
-    if (risk.missing_features && risk.missing_features.length) {
-      parts.push(el("p", { className: "meta" }, `Missing inputs: ${risk.missing_features.join(", ")}`));
+  try {
+    const response = await api("/query", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (run !== state.queryRun) return;
+    state.response = response;
+    state.analyses = new Map((response.analyses || []).map((a) => [a.patient_id, a]));
+    renderResponse(response);
+  } catch (err) {
+    if (run !== state.queryRun) return;
+    showError(err);
+  } finally {
+    if (run === state.queryRun) {
+      button.disabled = false;
+      button.textContent = "Run query";
+      $("workspace").setAttribute("aria-busy", "false");
     }
   }
+}
 
-  parts.push(el("h3", null, "Abnormal labs"));
-  if (a.abnormal_labs && a.abnormal_labs.length) {
-    parts.push(
-      table(
-        ["Lab", "Value", "Flag", "Reference", "Date", "Resource"],
-        a.abnormal_labs.map((l) => {
-          const ref = [l.reference_low, l.reference_high].map((v) => fmtNumber(v, 2));
-          return el(
-            "tr",
-            null,
-            el("td", null, l.display || l.concept),
-            el("td", null, `${fmtNumber(l.value, 2)} ${l.unit || ""}`.trim()),
-            el("td", null, l.flag),
-            el("td", null, ref[0] || ref[1] ? `${ref[0] || "…"} – ${ref[1] || "…"}` : ""),
-            el("td", null, fmtDate(l.effective)),
-            el("td", { className: "mono" }, `${l.evidence.resource_type}/${l.evidence.resource_id}`),
-          );
+function writeUrl(body) {
+  const params = new URLSearchParams({ q: body.question });
+  if (body.as_of) params.set("as_of", body.as_of);
+  try {
+    history.replaceState(null, "", `?${params}`);
+  } catch (_) {
+    /* sandboxed documents may refuse history changes */
+  }
+}
+
+function showLoading(question) {
+  const workspace = $("workspace");
+  workspace.hidden = false;
+  workspace.setAttribute("aria-busy", "true");
+  $("toolbar").hidden = true;
+  $("narrative").hidden = true;
+  clear($("result-message"));
+  for (const id of ["view-patients", "view-profile", "view-queries"]) clear($(id));
+  put(clear($("ledger")), 
+    el("div", { className: "loading", style: undefined },
+      el("p", { className: "question-echo", text: question }),
+      el("p", { className: "muted", text: "Planning the query, validating it and reading the FHIR server" }),
+      el("div", { className: "loading-line", "aria-hidden": "true" })));
+  put(clear($("derivation")), 
+    el("div", { className: "loading", "aria-hidden": "true" },
+      el("div", { className: "skeleton" }),
+      el("div", { className: "skeleton short" }),
+      el("div", { className: "skeleton" })));
+}
+
+function showError(err) {
+  clear($("ledger"));
+  put(clear($("derivation")), el("p", { className: "muted", text: "No plan was produced." }));
+  const title =
+    err.status === 503 ? "The query planner is unavailable"
+      : err.status === 422 ? "This question could not be turned into a safe query"
+        : err.status === 401 ? "An API key is required"
+          : err.status === 429 ? "Too many requests"
+            : "The query failed";
+  const guidance =
+    err.status === 503 ? "Try again in a moment, or ask your administrator to check the model server."
+      : err.status === 422 ? "Rephrase it, or start from one of the questions in the library."
+        : err.status === 429 ? "Wait a minute before running another query."
+          : null;
+  put(clear($("result-message")), 
+    el("div", { className: "callout error", role: "alert" },
+      el("h3", { text: title }),
+      el("ul", null, err.lines.map((line) => el("li", { text: line }))),
+      guidance && el("p", { text: guidance }),
+      err.requestId && el("p", { className: "request-id" }, "Request id ", el("code", { text: err.requestId }))));
+}
+
+// ---------------------------------------------------------------------------- response
+
+function renderResponse(response) {
+  renderDerivation(response);
+  renderLedger(response);
+
+  const narrative = $("narrative");
+  narrative.hidden = !response.narrative;
+  narrative.textContent = response.narrative || "";
+
+  const message = clear($("result-message"));
+  if (response.query_plan.unsupported) {
+    put(message, 
+      el("div", { className: "callout caution" },
+        el("h3", { text: "This question is outside what the planner can answer" }),
+        el("p", { text: response.query_plan.unsupported_reason || "No reason was given." }),
+        el("p", { className: "muted", text: "Nothing was read from the FHIR server. Try one of the questions in the library." })));
+    $("toolbar").hidden = true;
+    document.querySelector(".ask").classList.remove("compact");
+    return;
+  }
+  if ((response.validation_issues || []).length) {
+    put(message, 
+      el("div", { className: "callout caution" },
+        el("h3", { text: "The validator raised notes about this plan" }),
+        el("ul", null, response.validation_issues.map((issue) =>
+          el("li", { text: `${issue.message}${issue.location ? ` (${issue.location})` : ""}` })))));
+  }
+
+  $("toolbar").hidden = false;
+  renderPatients();
+  renderProfile(response);
+  renderQueries(response);
+  selectTab("tab-patients", false);
+}
+
+const ROLE_LABELS = {
+  filter: "Selects patients",
+  context: "Adds context, never removes anyone",
+  exclude: "Removes these patients",
+};
+
+function describeParam(param) {
+  // `system|code` values are shown by code only: the system is in the assumptions list.
+  const values = (param.values || []).map((v) => (v.includes("|") ? v.slice(v.lastIndexOf("|") + 1) : v));
+  const shown = values.slice(0, 3).join(", ");
+  const more = values.length > 3 ? ` and ${values.length - 3} more` : "";
+  const op = param.comparator ? `${param.comparator} ` : "";
+  const unit = param.unit ? ` ${param.unit}` : "";
+  return [el("code", { text: param.modifier ? `${param.name}:${param.modifier}` : param.name }),
+    ` ${op}${shown}${more}${unit}`];
+}
+
+function renderDerivation(response) {
+  const plan = response.query_plan;
+  const box = clear($("derivation"));
+  if (plan.unsupported || !plan.steps.length) {
+    put(box, el("p", { className: "muted", text: "No query was planned." }));
+    return;
+  }
+  const counts = (response.cohort && response.cohort.per_step_counts) || {};
+  const index = new Map(plan.steps.map((step, i) => [step.step_id, i + 1]));
+  put(box, 
+    el("ol", { className: "steps" }, plan.steps.map((step) => {
+      const role = step.role || "filter";
+      const count = counts[step.step_id];
+      return el("li", { className: `step role-${role}` },
+        el("span", { className: "step-marker", "aria-hidden": "true" }),
+        el("p", { className: "step-role", text: ROLE_LABELS[role] || role }),
+        el("p", { className: "step-title", text: `${step.resource_type} search` }),
+        step.purpose && el("p", { className: "step-purpose", text: step.purpose }),
+        step.params.length > 0 && el("ul", { className: "step-params" },
+          step.params.map((param) => el("li", null, describeParam(param)))),
+        step.depends_on && el("p", {
+          className: "step-purpose",
+          text: `Runs only for the patients found in step ${index.get(step.depends_on) || step.depends_on}`,
         }),
-      ),
-    );
-  } else {
-    parts.push(el("p", { className: "muted" }, "None found."));
-  }
+        count !== undefined && el("span", { className: "step-count", text: plural(count, "patient", "patients") }));
+    })),
+    el("p", {
+      className: "logic",
+      text: plan.cohort_logic === "any"
+        ? "A patient is included when any selecting step finds them."
+        : "A patient is included when every selecting step finds them.",
+    }));
 
-  if (a.data_gaps && a.data_gaps.length) parts.push(callout("warn", "Data gaps", a.data_gaps));
-
-  const features = Object.entries(a.features || {});
-  if (features.length) {
-    // The feature contract has ~100 entries; fold it so risk and labs stay in view.
-    parts.push(
-      el(
-        "details",
-        { className: "features" },
-        el("summary", null, `Features (${features.length})`),
-        table(
-          ["Feature", "Value"],
-          features.map(([k, v]) =>
-            el("tr", null, el("td", { className: "mono" }, k), el("td", null, fmtValue(v))),
-          ),
-        ),
-      ),
-    );
+  const notes = [...(plan.assumptions || [])];
+  for (const warning of response.warnings || []) if (!notes.includes(warning)) notes.push(warning);
+  if (notes.length) {
+    put(box, el("details", { className: "assumptions", open: true },
+      el("summary", { text: `Assumptions and notes (${notes.length})` }),
+      el("ul", null, notes.map((note) => el("li", { text: note })))));
   }
-  return el("div", null, parts);
 }
 
-async function analysePatient(patientId) {
-  const input = document.getElementById("patient-id");
-  const asOf = document.getElementById("patient-as-of");
-  const queryAsOf = document.getElementById("as-of").value;
-  input.value = patientId;
-  if (queryAsOf && !asOf.value) asOf.value = queryAsOf;
-  document.getElementById("patient-form").requestSubmit();
-  document.getElementById("patient-title").scrollIntoView({ behavior: "smooth", block: "start" });
+function renderLedger(response) {
+  const trace = response.trace || {};
+  const count = (response.patients || []).length;
+  const total = response.cohort ? response.cohort.total_patients : count;
+  const items = [
+    ["FHIR requests", fmt(trace.fhir_requests)],
+    ["Resources read", fmt(trace.resources_fetched)],
+    ["Model calls", fmt(trace.llm_calls)],
+    ["Time", trace.stages ? `${fmt(Object.values(trace.stages).reduce((a, b) => a + b, 0) / 1000, 2)} s` : "-"],
+  ];
+  put(clear($("ledger")), 
+    el("p", { className: "question-echo", text: response.question }),
+    el("p", { className: "ledger-headline" },
+      integerFormat.format(count),
+      el("small", { text: count === 1 ? "patient" : "patients" })),
+    el("dl", null, items.map(([label, value]) =>
+      el("div", null, el("dt", { text: label }), el("dd", { text: value })))),
+    trace.truncated && el("p", { className: "callout caution", style: undefined },
+      `Results were capped: ${total} matched, ${count} are shown. Narrow the question for the full set.`));
 }
 
-function setupPatientForm() {
-  const form = document.getElementById("patient-form");
-  const target = document.getElementById("patient-result");
-  const button = document.getElementById("patient-submit");
-  form.addEventListener("submit", (event) => {
-    event.preventDefault();
-    const id = document.getElementById("patient-id").value.trim();
-    const asOf = document.getElementById("patient-as-of").value;
-    const query = asOf ? `?as_of=${encodeURIComponent(asOf)}` : "";
-    withBusy(button, target, async () => {
-      const a = await api(`/patient/${encodeURIComponent(id)}/analyze${query}`);
-      clear(target).append(
-        el("h3", null, `Patient ${a.patient_id}`),
-        analysisBody(a),
-        disclaimer(a.risk && a.risk.disclaimer),
-      );
+// ---------------------------------------------------------------------------- patients
+
+const COLUMNS = [
+  { key: "patient_id", label: "Patient" },
+  { key: "age", label: "Age", num: true },
+  { key: "sex", label: "Sex" },
+  { key: "matched", label: "Found by", narrow: true },
+  { key: "risk", label: "Risk", needs: "risk" },
+  { key: "flags", label: "Out of range", needs: "labs" },
+  { key: "evidence", label: "Evidence", num: true, narrow: true },
+];
+
+function patientRows() {
+  const response = state.response;
+  return (response.patients || []).map((match) => {
+    const analysis = state.analyses.get(match.patient_id);
+    const labs = analysis ? analysis.abnormal_labs || [] : [];
+    return {
+      match,
+      analysis,
+      patient_id: match.patient_id,
+      age: match.age_years,
+      sex: match.gender || "",
+      matched: (match.matched_steps || []).length,
+      risk: analysis && analysis.risk ? analysis.risk.score : null,
+      high: labs.filter((lab) => lab.flag.includes("high")).length,
+      low: labs.filter((lab) => lab.flag.includes("low")).length,
+      flags: labs.length,
+      evidence: (match.evidence || []).length,
+    };
+  });
+}
+
+function renderPatients() {
+  const view = clear($("view-patients"));
+  const rows = patientRows();
+  const hasRisk = rows.some((row) => row.risk !== null);
+  const hasLabs = state.analyses.size > 0;
+  const columns = COLUMNS.filter((c) => (c.needs === "risk" ? hasRisk : c.needs === "labs" ? hasLabs : true));
+
+  const needle = state.filter.toLowerCase();
+  const visible = rows.filter((row) =>
+    !needle || row.patient_id.toLowerCase().includes(needle) || row.sex.toLowerCase().startsWith(needle));
+  const { key, dir } = state.sort;
+  visible.sort((a, b) => {
+    const x = a[key];
+    const y = b[key];
+    if (x === y) return a.patient_id.localeCompare(b.patient_id);
+    if (x === null || x === undefined) return 1;
+    if (y === null || y === undefined) return -1;
+    return (typeof x === "string" ? x.localeCompare(y) : x - y) * dir;
+  });
+
+  const head = el("tr", null, columns.map((column) => {
+    const sorted = state.sort.key === column.key;
+    return el("th", {
+      scope: "col",
+      className: [column.num ? "num" : "", column.narrow ? "hide-narrow" : ""].join(" ").trim(),
+      "aria-sort": sorted ? (dir > 0 ? "ascending" : "descending") : "none",
+    }, el("button", {
+      type: "button",
+      className: "sort",
+      onclick: () => {
+        state.sort = { key: column.key, dir: sorted ? -dir : column.key === "risk" || column.key === "flags" ? -1 : 1 };
+        renderPatients();
+      },
+    }, column.label, el("span", { className: "sort-glyph", "aria-hidden": "true", text: sorted ? (dir > 0 ? "▲" : "▼") : "" })));
+  }));
+
+  const body = el("tbody");
+  for (const row of visible) {
+    const cells = {
+      patient_id: el("td", null, el("button", {
+        type: "button", className: "patient-open", text: row.patient_id,
+        "aria-label": `Open patient ${row.patient_id}`,
+        onclick: () => openPatient(row.patient_id, row.match),
+      })),
+      age: el("td", { className: "num", text: fmtAge(row.age) }),
+      sex: el("td", { text: sexLabel(row.sex) }),
+      matched: el("td", { className: "hide-narrow" },
+        el("span", { className: "steps-matched" }, (row.match.matched_steps || []).map((s) =>
+          el("span", { className: "pill", text: s.replaceAll("_", " ") })))),
+      risk: el("td", null, row.analysis && row.analysis.risk ? riskMeter(row.analysis.risk) : el("span", { className: "muted", text: "-" })),
+      flags: el("td", null, el("span", { className: "flags" },
+        row.high > 0 && el("span", { className: "flag high", title: "results above the reference interval", text: `${row.high} high` }),
+        row.low > 0 && el("span", { className: "flag low", title: "results below the reference interval", text: `${row.low} low` }),
+        row.flags === 0 && el("span", { className: "muted", text: "None" }))),
+      evidence: el("td", { className: "num hide-narrow", text: fmt(row.evidence) }),
+    };
+    put(body, el("tr", null, columns.map((column) => cells[column.key])));
+  }
+  if (!visible.length) {
+    put(body, el("tr", { className: "empty-row" }, el("td", {
+      colspan: String(columns.length),
+      text: rows.length ? "No patient in this cohort matches the filter." : "No patient matched this question.",
+    })));
+  }
+
+  put(view, 
+    el("div", { className: "table-wrap" },
+      el("table", null,
+        el("caption", { className: "visually-hidden", text: "Patients in the cohort" }),
+        el("thead", null, head),
+        body)),
+    el("p", {
+      className: "table-foot",
+      text: visible.length === rows.length
+        ? `${plural(rows.length, "patient", "patients")}. Select an id to see the record behind the match.`
+        : `${visible.length} of ${rows.length} patients shown.`,
+    }));
+}
+
+function riskMeter(risk) {
+  const pct = Math.round(risk.score * 100);
+  return el("span", { className: "risk", title: `${risk.model_name} ${risk.model_version}` },
+    el("span", {
+      className: `meter ${risk.band}`, role: "img",
+      "aria-label": `risk ${pct} percent, ${risk.band}`,
+    }, el("span", { style: undefined, "data-width": String(pct) })),
+    el("span", { className: "risk-label", text: `${risk.band} ${pct}%` }));
+}
+
+// Inline widths cannot come from a style attribute under the CSP, so they are set
+// through the CSSOM after the element exists.
+function applyWidths(root) {
+  for (const node of root.querySelectorAll("[data-width]")) {
+    node.style.width = `${Math.max(0, Math.min(100, Number(node.dataset.width)))}%`;
+  }
+}
+
+// ---------------------------------------------------------------------------- profile
+
+const NUMERIC_FEATURES = {
+  age_years: ["Age", "years", "Patient"],
+  hba1c_latest: ["HbA1c, latest", "%", "Observation"],
+  egfr_latest: ["eGFR, latest", "mL/min/1.73m²", "Observation"],
+  systolic_bp_latest: ["Systolic blood pressure, latest", "mmHg", "Observation"],
+  ldl_cholesterol_latest: ["LDL cholesterol, latest", "mg/dL", "Observation"],
+  condition_count: ["Active conditions", "per patient", "Condition"],
+  active_medication_count: ["Active medications", "per patient", "MedicationRequest"],
+  encounter_count: ["Encounters", "per patient", "Encounter"],
+};
+
+const FLAG_FEATURES = {
+  is_female: ["Female", "Patient"],
+  has_type_2_diabetes: ["Type 2 diabetes", "Condition"],
+  has_hypertension: ["Hypertension", "Condition"],
+  has_chronic_kidney_disease: ["Chronic kidney disease", "Condition"],
+  on_biguanide: ["On metformin", "MedicationRequest"],
+  on_insulin: ["On insulin", "MedicationRequest"],
+  on_sglt2_inhibitor: ["On an SGLT2 inhibitor", "MedicationRequest"],
+  medication_change_recent: ["Recent medication change", "MedicationRequest"],
+};
+
+function renderProfile(response) {
+  const view = clear($("view-profile"));
+  const stats = (response.cohort && response.cohort.statistics) || {};
+  // A feature is only described when the query read its source in full. A Condition
+  // search restricted to diabetes codes says nothing about hypertension, so showing
+  // "Hypertension 0%" there would be a fabricated finding. Observation-derived values
+  // are safe either way: an unread lab has no value and drops out on its own.
+  const steps = response.query_plan.steps;
+  const fullyRead = (type) =>
+    type === "Patient" || type === "Observation" ||
+    steps.some((s) => s.resource_type === type && !s.params.some((p) => ["code", "_id"].includes(p.name)));
+  const fetched = { has: fullyRead };
+  const total = response.cohort ? response.cohort.total_patients : 0;
+
+  const numeric = Object.entries(NUMERIC_FEATURES).filter(([name, [, , source]]) =>
+    stats[name] && fetched.has(source));
+  const flags = Object.entries(FLAG_FEATURES).filter(([name, [, source]]) =>
+    stats.flags && stats.flags[name] && fetched.has(source));
+  const unmeasured = [...Object.entries(NUMERIC_FEATURES), ...Object.entries(FLAG_FEATURES)]
+    .filter(([, spec]) => !fetched.has(spec[spec.length - 1]))
+    .map(([, spec]) => spec[0]);
+
+  if (!total) {
+    put(view, el("p", { className: "muted", text: "There is no cohort to describe." }));
+    return;
+  }
+
+  const sections = [];
+  if (numeric.length) {
+    sections.push(el("section", null,
+      el("h3", { text: "Distributions" }),
+      el("p", {
+        className: "profile-sub",
+        text: "Each strip spans the lowest to the highest value; the band is the middle half and the dot the median.",
+      }),
+      numeric.map(([name, [label, unit]]) => distributionRow(label, unit, stats[name], total)),
+      dataTable(numeric.map(([name, [label, unit]]) => [label, unit, stats[name]]))));
+  }
+  if (flags.length) {
+    sections.push(el("section", null,
+      el("h3", { text: "Share of the cohort" }),
+      el("p", { className: "profile-sub", text: "Among patients for whom the answer is known." }),
+      flags.map(([name, [label]]) => proportionRow(label, stats.flags[name]))));
+  }
+  if (unmeasured.length) {
+    sections.push(el("p", {
+      className: "profile-sub",
+      text: `Not described, because this query did not read every record they depend on: ${unmeasured.join(", ")}.`,
+    }));
+  }
+  put(view, el("div", { className: "profile" }, sections));
+  applyWidths(view);
+}
+
+function distributionRow(label, unit, s, total) {
+  if (s.max === s.min) {
+    return el("div", { className: "dist" },
+      el("p", { className: "dist-name" }, label, el("small", { text: `${unit}, n = ${s.n} of ${total}` })),
+      el("p", { className: "muted", text: `Every patient has the same value` }),
+      el("p", { className: "dist-value" }, fmt(s.median), el("small", { text: "all" })));
+  }
+  const width = 400;
+  const pad = 6;
+  const span = s.max - s.min || 1;
+  const x = (v) => pad + ((v - s.min) / span) * (width - pad * 2);
+  const hasIqr = s.p25 !== undefined && s.p75 !== undefined;
+  const title = `${label}: median ${fmt(s.median)}, middle half ${fmt(s.p25)} to ${fmt(s.p75)}, range ${fmt(s.min)} to ${fmt(s.max)} (n = ${s.n})`;
+  const chart = svg("svg", { viewBox: `0 0 ${width} 34`, preserveAspectRatio: "none", role: "img", "aria-label": title },
+    svg("title", null, title),
+    svg("line", { class: "axis-line", x1: x(s.min), x2: x(s.max), y1: 12, y2: 12 }),
+    hasIqr && svg("rect", { class: "iqr", x: x(s.p25), y: 6, width: Math.max(2, x(s.p75) - x(s.p25)), height: 12, rx: 3 }),
+    svg("circle", { class: "median", cx: x(s.median), cy: 12, r: 5 }),
+    svg("text", { class: "tick-label", x: x(s.min), y: 32, "text-anchor": "start" }, fmt(s.min)),
+    svg("text", { class: "tick-label", x: x(s.max), y: 32, "text-anchor": "end" }, fmt(s.max)));
+  return el("div", { className: "dist" },
+    el("p", { className: "dist-name" }, label, el("small", { text: `${unit}, n = ${s.n} of ${total}` })),
+    chart,
+    el("p", { className: "dist-value" }, fmt(s.median), el("small", { text: "median" })));
+}
+
+function proportionRow(label, f) {
+  const pct = f.n ? (f.count / f.n) * 100 : 0;
+  return el("div", { className: "prop" },
+    el("p", { className: "dist-name", text: label }),
+    el("span", { className: "meter", role: "img", "aria-label": `${label}: ${fmt(pct)} percent` },
+      el("span", { "data-width": String(pct) })),
+    el("p", { className: "dist-value" }, `${fmt(pct, 0)}%`, el("small", { text: `${f.count} of ${f.n}` })));
+}
+
+function dataTable(rows) {
+  return el("details", { className: "data-table-toggle" },
+    el("summary", { text: "Show these values as a table" }),
+    el("div", { className: "table-wrap" }, el("table", null,
+      el("thead", null, el("tr", null, ["Measure", "n", "Min", "25th", "Median", "75th", "Max"].map((h, i) =>
+        el("th", { scope: "col", className: i ? "num" : "", text: h })))),
+      el("tbody", null, rows.map(([label, unit, s]) => el("tr", null,
+        el("th", { scope: "row", text: `${label} (${unit})` }),
+        [s.n, s.min, s.p25, s.median, s.p75, s.max].map((v) => el("td", { className: "num", text: fmt(v) }))))))));
+}
+
+// ---------------------------------------------------------------------------- queries
+
+const STAGE_LABELS = {
+  planning: "Planning",
+  retrieval: "Reading FHIR",
+  cohort: "Combining steps",
+  demographics: "Demographics",
+  normalization: "Normalising",
+  screening: "Screening results",
+  features: "Features",
+  analysis: "Analytics",
+  narrative: "Written summary",
+};
+
+function renderQueries(response) {
+  const view = clear($("view-queries"));
+  const queries = response.fhir_queries || [];
+  put(view, 
+    el("p", { className: "profile-sub", text: "The exact read-only searches sent to the FHIR server, in order." }),
+    el("ol", { className: "query-list" }, queries.map((query) =>
+      el("li", { className: "query-item" },
+        el("code", { text: query }),
+        el("button", {
+          type: "button", className: "copy", text: "Copy",
+          onclick: async (event) => {
+            try {
+              await navigator.clipboard.writeText(query);
+              event.target.textContent = "Copied";
+            } catch (_) {
+              event.target.textContent = "Select and copy";
+            }
+          },
+        })))));
+
+  const stages = (response.trace && response.trace.stages) || {};
+  const longest = Math.max(1, ...Object.values(stages));
+  put(view, el("section", { className: "timing" },
+    el("h3", { text: "Where the time went" }),
+    Object.entries(stages).map(([name, ms]) =>
+      el("div", { className: "timing-row" },
+        el("span", { text: STAGE_LABELS[name] || name }),
+        el("span", { className: "meter", "aria-hidden": "true" }, el("span", { "data-width": String((ms / longest) * 100) })),
+        el("span", { className: "num", text: `${fmt(ms, 0)} ms` })))));
+  applyWidths(view);
+}
+
+// ---------------------------------------------------------------------------- tabs
+
+const TAB_IDS = ["tab-patients", "tab-profile", "tab-queries"];
+
+function selectTab(id, focus = true) {
+  for (const tabId of TAB_IDS) {
+    const tab = $(tabId);
+    const selected = tabId === id;
+    tab.setAttribute("aria-selected", String(selected));
+    tab.tabIndex = selected ? 0 : -1;
+    $(tab.getAttribute("aria-controls")).hidden = !selected;
+  }
+  if (focus) $(id).focus();
+  $("filter").hidden = id !== "tab-patients";
+}
+
+function setupTabs() {
+  for (const id of TAB_IDS) {
+    const tab = $(id);
+    tab.addEventListener("click", () => selectTab(id, false));
+    tab.addEventListener("keydown", (event) => {
+      const index = TAB_IDS.indexOf(id);
+      if (event.key === "ArrowRight") selectTab(TAB_IDS[(index + 1) % TAB_IDS.length]);
+      else if (event.key === "ArrowLeft") selectTab(TAB_IDS[(index + TAB_IDS.length - 1) % TAB_IDS.length]);
+      else return;
+      event.preventDefault();
     });
+  }
+  $("filter").addEventListener("input", (event) => {
+    state.filter = event.target.value.trim();
+    renderPatients();
+    applyWidths($("view-patients"));
   });
 }
 
-// ------------------------------------------------------------------------------- boot
+// ---------------------------------------------------------------------------- export
 
-function setupKeyForm() {
-  const form = document.getElementById("key-form");
-  const input = document.getElementById("api-key");
-  input.value = apiKey;
-  form.addEventListener("submit", (event) => {
+const EXPORT_NAMES = { csv: "cohort.csv", group: "cohort-group.json", bundle: "cohort-bundle.json" };
+
+function setupExport() {
+  const menu = $("export-menu");
+  for (const button of menu.querySelectorAll("button[data-format]")) {
+    button.addEventListener("click", async () => {
+      menu.open = false;
+      if (!state.lastBody) return;
+      const format = button.dataset.format;
+      try {
+        const response = await request(`/query/export?format=${encodeURIComponent(format)}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ ...state.lastBody, narrate: false }),
+        });
+        const url = URL.createObjectURL(await response.blob());
+        const link = el("a", { href: url, download: EXPORT_NAMES[format] || "cohort" });
+        document.body.append(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        toast(`Downloaded ${EXPORT_NAMES[format]}`);
+      } catch (err) {
+        toast(`Export failed: ${err.lines ? err.lines[0] : err.message}`);
+      }
+    });
+  }
+  document.addEventListener("click", (event) => {
+    if (menu.open && !menu.contains(event.target)) menu.open = false;
+  });
+}
+
+// ---------------------------------------------------------------------------- patient drawer
+
+function setupDrawer() {
+  const drawer = $("patient-drawer");
+  $("drawer-close").addEventListener("click", () => drawer.close());
+  drawer.addEventListener("click", (event) => {
+    if (event.target === drawer) drawer.close();
+  });
+  $("patient-form").addEventListener("submit", (event) => {
     event.preventDefault();
-    setApiKey(input.value);
-    loadHealth();
-    loadExamples();
+    const input = $("patient-id");
+    if (!input.reportValidity()) return;
+    openPatient(input.value.trim(), null);
   });
 }
+
+async function openPatient(patientId, match) {
+  const drawer = $("patient-drawer");
+  $("drawer-title").textContent = patientId;
+  const body = clear($("drawer-body"));
+  put(body, el("div", { className: "loading", "aria-hidden": "true" },
+    el("div", { className: "loading-line" }), el("div", { className: "skeleton" }), el("div", { className: "skeleton short" })));
+  if (!drawer.open) drawer.showModal();
+
+  const asOf = (state.lastBody && state.lastBody.as_of) || $("as-of").value;
+  const query = asOf ? `?as_of=${encodeURIComponent(asOf)}` : "";
+  try {
+    const analysis = await api(`/patient/${encodeURIComponent(patientId)}/analyze${query}`);
+    renderPatient(body, analysis, match);
+  } catch (err) {
+    put(clear(body), el("div", { className: "callout error", role: "alert" },
+      el("h3", { text: err.status === 404 ? "No record for this id" : "The record could not be read" }),
+      el("ul", null, err.lines.map((line) => el("li", { text: line }))),
+      err.status === 404 && el("p", { text: "Check the id, including letter case." }),
+      err.requestId && el("p", { className: "request-id" }, "Request id ", el("code", { text: err.requestId }))));
+  }
+}
+
+function renderPatient(body, a, match) {
+  clear(body);
+  put(body, el("section", null,
+    el("dl", { className: "facts" },
+      fact("Age", fmtAge(a.age_years)),
+      fact("Sex", sexLabel(a.gender)),
+      fact("Out of range", String((a.abnormal_labs || []).length)),
+      fact("Evidence", String((a.evidence || []).length)))));
+
+  if (match && (match.matched_steps || []).length) {
+    put(body, el("section", null,
+      el("h3", { text: "Why this patient is in the cohort" }),
+      el("p", { text: `Found by ${match.matched_steps.map((s) => s.replaceAll("_", " ")).join(", ")}.` }),
+      match.summary && el("p", { className: "muted", text: match.summary })));
+  }
+
+  if (a.risk) {
+    const pct = Math.round(a.risk.score * 100);
+    put(body, el("section", { className: "risk-panel" },
+      el("h3", { text: "Deterioration risk (demonstration model)" }),
+      el("p", null, el("strong", { text: `${a.risk.band.charAt(0).toUpperCase()}${a.risk.band.slice(1)}` }), `, score ${pct}%`),
+      el("span", { className: `meter ${a.risk.band}`, role: "img", "aria-label": `risk ${pct} percent` },
+        el("span", { "data-width": String(pct) })),
+      a.risk.contributing_factors.length > 0 && el("ul", null, a.risk.contributing_factors.map((f) => el("li", { text: f }))),
+      a.risk.missing_features.length > 0 && el("p", {
+        className: "muted",
+        text: `Computed without: ${a.risk.missing_features.map(humanFeature).join(", ")}.`,
+      })));
+  }
+
+  const labs = a.abnormal_labs || [];
+  put(body, el("section", null,
+    el("h3", { text: "Results outside the reference interval" }),
+    labs.length ? labs.map(labRow) : el("p", { className: "muted", text: "None in the screening window." })));
+
+  if ((a.data_gaps || []).length) {
+    put(body, el("section", null,
+      el("h3", { text: "Missing from the record" }),
+      el("div", { className: "gaps" }, a.data_gaps.map((g) => el("span", { className: "pill", text: humanFeature(g) })))));
+  }
+
+  const evidence = a.evidence || [];
+  put(body, el("section", null,
+    el("h3", { text: "Evidence" }),
+    evidence.length
+      ? el("ul", { className: "evidence-list" }, evidence.map((e) => el("li", null,
+        el("span", null, e.display || e.concept || e.resource_type,
+          e.effective && el("span", { className: "muted", text: ` on ${fmtDate(e.effective)}` })),
+        el("span", { className: "val", text: e.value || "" }),
+        el("span", { className: "ref", text: `${e.resource_type}/${e.resource_id}` }))))
+      : el("p", { className: "muted", text: "No supporting resources." })));
+
+  const features = Object.entries(a.features || {}).filter(([, v]) => v !== null && v !== undefined);
+  if (features.length) {
+    put(body, el("details", { className: "features-toggle" },
+      el("summary", { text: `All computed features (${features.length})` }),
+      el("div", { className: "features-grid" }, features.map(([k, v]) =>
+        el("div", null, el("code", { text: k }), el("span", { text: typeof v === "boolean" ? (v ? "yes" : "no") : fmt(v, 2) }))))));
+  }
+
+  put(body, el("p", {
+    className: "drawer-disclaimer",
+    text: (a.risk && a.risk.disclaimer) || "Research demonstration on synthetic data. Not for clinical use.",
+  }));
+  applyWidths(body);
+}
+
+function fact(label, value) {
+  return el("div", null, el("dt", { text: label }), el("dd", { text: value }));
+}
+
+function humanFeature(name) {
+  const known = NUMERIC_FEATURES[name] || FLAG_FEATURES[name];
+  if (known) return known[0];
+  return name.replace(/_latest$/, "").replaceAll("_", " ");
+}
+
+function labRow(lab) {
+  const direction = lab.flag.includes("high") ? "high" : "low";
+  const critical = lab.flag.startsWith("critical");
+  const low = lab.reference_low;
+  const high = lab.reference_high;
+  const value = lab.value;
+  const anchors = [low, high, value].filter((v) => typeof v === "number");
+  let min = Math.min(...anchors);
+  let max = Math.max(...anchors);
+  if (high === null || high === undefined) max = Math.max(max, (low || value) * 1.4);
+  if (low === null || low === undefined) min = Math.min(min, 0);
+  const pad = (max - min || 1) * 0.12;
+  min -= pad;
+  max += pad;
+  const width = 400;
+  const x = (v) => ((v - min) / (max - min)) * width;
+  const bandStart = typeof low === "number" ? x(low) : 0;
+  const bandEnd = typeof high === "number" ? x(high) : width;
+  const range = [low, high].every((v) => typeof v === "number")
+    ? `${fmt(low)} to ${fmt(high)}`
+    : typeof low === "number" ? `at least ${fmt(low)}` : `at most ${fmt(high)}`;
+  const label = `${lab.display || lab.concept}: ${fmt(value)} ${lab.unit || ""}, reference ${range}`;
+
+  const chart = typeof value === "number" && svg("svg", {
+    viewBox: `0 0 ${width} 30`, preserveAspectRatio: "none", role: "img", "aria-label": label,
+  },
+  svg("title", null, label),
+  svg("line", { class: "track", x1: 0, x2: width, y1: 10, y2: 10 }),
+  svg("rect", { class: "range-band", x: bandStart, y: 4, width: Math.max(2, bandEnd - bandStart), height: 12, rx: 2 }),
+  typeof low === "number" && svg("line", { class: "range-edge", x1: x(low), x2: x(low), y1: 3, y2: 17 }),
+  typeof high === "number" && svg("line", { class: "range-edge", x1: x(high), x2: x(high), y1: 3, y2: 17 }),
+  svg("circle", { class: `value-dot ${direction}`, cx: x(value), cy: 10, r: 6 }),
+  typeof low === "number" && svg("text", { class: "tick-label", x: x(low), y: 29, "text-anchor": "middle" }, fmt(low)),
+  typeof high === "number" && svg("text", { class: "tick-label", x: x(high), y: 29, "text-anchor": "middle" }, fmt(high)));
+
+  return el("div", { className: "lab" },
+    el("div", null,
+      el("p", { className: "lab-name", text: lab.display || lab.concept }),
+      el("p", { className: "lab-when", text: `${fmtDate(lab.effective)}, reference ${range} ${lab.unit || ""}` })),
+    el("div", { className: "lab-value" },
+      `${fmt(value)} ${lab.unit || ""} `,
+      el("span", { className: `flag ${direction}`, text: `${critical ? "Critical " : ""}${direction}` })),
+    chart);
+}
+
+// ---------------------------------------------------------------------------- misc
+
+let toastTimer = null;
+
+function toast(message) {
+  const node = $("toast");
+  node.textContent = message;
+  node.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    node.hidden = true;
+  }, 3200);
+}
+
+function setupShortcuts() {
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "/" || event.ctrlKey || event.metaKey || event.altKey) return;
+    const target = event.target;
+    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target.isContentEditable) return;
+    if (document.querySelector("dialog[open]")) return;
+    event.preventDefault();
+    $("question").focus();
+  });
+  if (/Mac|iPhone|iPad/.test(navigator.platform || "")) {
+    const hint = $("shortcut-hint");
+    const keys = hint.querySelectorAll("kbd");
+    if (keys[1]) keys[1].textContent = "⌘";
+  }
+}
+
+function restoreFromUrl() {
+  const params = new URLSearchParams(location.search);
+  const question = params.get("q");
+  if (!question) return;
+  $("question").value = question;
+  const asOf = params.get("as_of");
+  if (asOf && /^\d{4}-\d{2}-\d{2}$/.test(asOf)) $("as-of").value = asOf;
+  $("query-form").requestSubmit();
+}
+
+// Widths inside freshly rendered patient rows are applied after each render.
+const observer = new MutationObserver((mutations) => {
+  for (const mutation of mutations) {
+    for (const node of mutation.addedNodes) if (node instanceof Element) applyWidths(node);
+  }
+});
 
 document.addEventListener("DOMContentLoaded", () => {
-  setupKeyForm();
+  observer.observe(document.body, { childList: true, subtree: true });
+  setupAccess();
   setupQueryForm();
-  setupPatientForm();
-  loadHealth();
-  loadExamples();
+  setupTabs();
+  setupExport();
+  setupDrawer();
+  setupShortcuts();
+  renderRecent();
+  loadStatus();
+  loadLibrary();
+  restoreFromUrl();
 });

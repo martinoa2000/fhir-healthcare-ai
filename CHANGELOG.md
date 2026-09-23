@@ -6,37 +6,7 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-### Added
-
-- `LICENSE` (Apache-2.0), `THIRD_PARTY_NOTICES.md`, `SECURITY.md`, `CONTRIBUTING.md`,
-  `CODE_OF_CONDUCT.md`, issue and pull request templates, and Dependabot updates for
-  pip, GitHub Actions and Docker.
-
-### Changed
-
-- The local vLLM server is the only model backend. The OpenAI, Anthropic and
-  in-process Hugging Face providers are removed, so question text can never be sent to
-  a hosted API; `LLM_PROVIDER` accepts `vllm` or `mock`. Unused numpy, scikit-learn and
-  PyYAML dependencies are dropped.
-- The local model is now Qwen3.8-27B (`Qwen/Qwen3.8-27B-FP8`) served by
-  `vllm/vllm-openai:v0.30.0`, replacing Qwen2.5-7B-Instruct on vLLM 0.6.3. Qwen3
-  thinking mode is off by default (`LLM_ENABLE_THINKING`), on the server and per
-  request, so the planner receives a JSON plan directly.
-
-### Removed
-
-- The vendored Claude Code design skills (`.claude/skills/`, `skills-lock.json`). They
-  were development aids, not part of the project; they are now git-ignored.
-
-### Fixed
-
-- The deterministic planner's keyword fallbacks (reduced kidney function, abnormal
-  potassium, elevated HbA1c) no longer answer a question that also names an age, a sex,
-  a drug, an encounter or a second diagnosis. "Which diabetic patients 65 or older have
-  diabetic nephropathy?" is now refused instead of returning the whole
-  reduced-kidney-function cohort.
-
-## [0.1.0]
+## [0.1.0] - 2026-09-23
 
 First public version.
 
@@ -45,8 +15,12 @@ First public version.
 - Governed question-to-cohort pipeline over HL7 FHIR R4: LLM planner emitting a
   structured `QueryPlan`, concept expander, allowlist validator, deterministic query
   builder and read-only FHIR client.
-- LLM providers: self-hosted vLLM (default), Hugging Face, OpenAI, Anthropic, and a
-  deterministic rule-based planner with automatic, reported fallback.
+- Local-only inference: a self-hosted vLLM server serving Qwen3.8-27B
+  (`Qwen/Qwen3.8-27B-FP8`, `vllm/vllm-openai:v0.30.0`) with thinking mode off, and a
+  deterministic rule-based planner used by CI and as an automatic, reported fallback.
+  No hosted-API provider exists, so question text never leaves the deployment.
+- The rule-based planner refuses any question with a criterion it cannot express,
+  rather than answering part of it.
 - Normalisation, per-patient features, abnormal-lab detection and a transparent risk
   score; evidence links from every claim to its FHIR resource.
 - FastAPI service: `/query`, `/query/export` (CSV, FHIR `Group`, FHIR `Bundle`),
@@ -59,6 +33,8 @@ First public version.
 - `fhir-ai-bench` benchmark scoring cohorts against independently computed ground
   truth, refusals and safety violations; gated in CI.
 - Docker image and Compose stack with HAPI FHIR, seeder and optional vLLM.
+- Apache-2.0 `LICENSE`, third-party notices, security policy, contributing guide, code
+  of conduct, issue and pull request templates, and Dependabot.
 
 [Unreleased]: https://github.com/martinoa2000/fhir-healthcare-ai/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/martinoa2000/fhir-healthcare-ai/releases/tag/v0.1.0

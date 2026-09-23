@@ -4,74 +4,148 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <title>fhir-healthcare-ai</title>
+  <title>Cohort Explorer</title>
   <link rel="icon" href="data:,">
+  <link rel="preload" href="/ui/atkinson-next.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/ui/app.css">
   <script src="/ui/app.js" defer></script>
 </head>
 <body>
+  <a class="skip-link" href="#main">Skip to the question</a>
+
   <header class="topbar">
     <div class="brand">
-      <strong>fhir-healthcare-ai</strong>
-      <span class="muted">governed questions over HL7 FHIR R4</span>
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M4 12h4l2-5 4 10 2-5h4" />
+      </svg>
+      <span class="brand-name">Cohort Explorer</span>
+      <span class="brand-context">over FHIR R4</span>
     </div>
-    <form id="key-form" class="key-form" autocomplete="off">
-      <label for="api-key" class="muted">API key</label>
-      <input type="password" id="api-key" name="api_key" maxlength="256"
-             placeholder="only if the server requires one">
-      <button type="submit">Use</button>
+
+    <div id="status" class="status" aria-live="polite">
+      <span class="status-item muted">Checking connection</span>
+    </div>
+
+    <form id="patient-form" class="open-patient" autocomplete="off" role="search">
+      <label for="patient-id" class="visually-hidden">Open a patient by id</label>
+      <input type="text" id="patient-id" name="patient_id" maxlength="64"
+             pattern="[A-Za-z0-9\-.]{1,64}" placeholder="Open patient by id" required
+             spellcheck="false">
+      <button type="submit" class="button quiet">Open</button>
     </form>
-    <div id="health" class="health" aria-live="polite">
-      <span class="badge">checking status…</span>
-    </div>
+
+    <button type="button" id="access-button" class="button quiet" aria-haspopup="dialog">
+      Access
+    </button>
   </header>
 
-  <p class="disclaimer" id="banner-disclaimer">
-    Research and engineering demonstration only. Synthetic data. Not for clinical use.
+  <p class="notice" id="notice">
+    Research demonstration on synthetic patients. Results are not validated for clinical
+    use and must not inform anyone's care.
   </p>
 
-  <main>
-    <section class="panel" aria-labelledby="query-title">
-      <h2 id="query-title">Ask a question</h2>
+  <main id="main">
+    <section class="ask" aria-labelledby="ask-title">
       <form id="query-form" autocomplete="off">
-        <label for="question">Question</label>
-        <textarea id="question" name="question" rows="3" minlength="3" maxlength="1000"
-                  required placeholder="Which diabetic patients are not on a statin?"></textarea>
-        <div id="examples" class="chips" aria-label="Example questions"></div>
-        <div class="row">
-          <label class="inline">As of
+        <label for="question" id="ask-title" class="ask-title">
+          Ask about the patient population
+        </label>
+        <div class="ask-row">
+          <textarea id="question" name="question" rows="2" minlength="3" maxlength="1000"
+                    required spellcheck="true"
+                    placeholder="Which diabetic patients are not on a statin?"></textarea>
+          <button type="submit" id="run" class="button primary">Run query</button>
+        </div>
+        <div class="ask-options">
+          <label class="inline-field">
+            Reference date
             <input type="date" id="as-of" name="as_of">
           </label>
-          <label class="inline check">
-            <input type="checkbox" id="narrate" name="narrate" checked> Narrative
+          <label class="inline-field">
+            <input type="checkbox" id="narrate" name="narrate" checked>
+            Written summary
           </label>
-          <button type="submit" id="query-submit">Ask</button>
+          <span class="hint" id="shortcut-hint">
+            <kbd>/</kbd> to focus, <kbd>Ctrl</kbd>+<kbd>Enter</kbd> to run
+          </span>
         </div>
       </form>
-      <div id="query-result" class="result" aria-live="polite"></div>
+
+      <div class="library" id="library" aria-label="Question library"></div>
+      <div class="recent" id="recent" hidden></div>
     </section>
 
-    <section class="panel" aria-labelledby="patient-title">
-      <h2 id="patient-title">Analyse a patient</h2>
-      <form id="patient-form" autocomplete="off">
-        <div class="row">
-          <label class="inline grow">Patient id
-            <input type="text" id="patient-id" name="patient_id" required maxlength="64"
-                   pattern="[A-Za-z0-9\-.]{1,64}" placeholder="syn42-pat-0001">
-          </label>
-          <label class="inline">As of
-            <input type="date" id="patient-as-of" name="as_of">
-          </label>
-          <button type="submit" id="patient-submit">Analyse</button>
+    <section id="workspace" class="workspace" hidden aria-live="polite" aria-busy="false">
+      <aside class="derivation" aria-labelledby="derivation-title">
+        <h2 id="derivation-title">How this answer was derived</h2>
+        <div id="derivation"></div>
+      </aside>
+
+      <div class="results">
+        <div id="ledger" class="ledger"></div>
+        <div id="narrative" class="narrative" hidden></div>
+        <div id="result-message"></div>
+
+        <div class="toolbar" id="toolbar" hidden>
+          <div class="tabs" role="tablist" aria-label="Result views">
+            <button type="button" role="tab" id="tab-patients" aria-controls="view-patients"
+                    aria-selected="true">Patients</button>
+            <button type="button" role="tab" id="tab-profile" aria-controls="view-profile"
+                    aria-selected="false" tabindex="-1">Cohort profile</button>
+            <button type="button" role="tab" id="tab-queries" aria-controls="view-queries"
+                    aria-selected="false" tabindex="-1">Queries and timing</button>
+          </div>
+          <div class="toolbar-end">
+            <label for="filter" class="visually-hidden">Filter patients</label>
+            <input type="search" id="filter" placeholder="Filter patients" spellcheck="false">
+            <details class="menu" id="export-menu">
+              <summary class="button quiet">Export</summary>
+              <div class="menu-list" role="group" aria-label="Export this cohort">
+                <button type="button" data-format="csv">
+                  <span>Spreadsheet</span><span class="menu-note">CSV, one row per patient</span>
+                </button>
+                <button type="button" data-format="group">
+                  <span>FHIR Group</span><span class="menu-note">R4 resource with the queries</span>
+                </button>
+                <button type="button" data-format="bundle">
+                  <span>FHIR Bundle</span><span class="menu-note">Collection holding the Group</span>
+                </button>
+              </div>
+            </details>
+          </div>
         </div>
-      </form>
-      <div id="patient-result" class="result" aria-live="polite"></div>
+
+        <div id="view-patients" role="tabpanel" aria-labelledby="tab-patients" tabindex="0"></div>
+        <div id="view-profile" role="tabpanel" aria-labelledby="tab-profile" tabindex="0" hidden></div>
+        <div id="view-queries" role="tabpanel" aria-labelledby="tab-queries" tabindex="0" hidden></div>
+      </div>
     </section>
   </main>
 
-  <footer class="muted">
-    <a href="/docs">OpenAPI docs</a> · <a href="/capabilities">capabilities</a> ·
-    <a href="/health">health</a>
-  </footer>
+  <dialog id="patient-drawer" class="drawer" aria-labelledby="drawer-title">
+    <div class="drawer-head">
+      <h2 id="drawer-title">Patient</h2>
+      <button type="button" class="button quiet" id="drawer-close">Close</button>
+    </div>
+    <div id="drawer-body" class="drawer-body"></div>
+  </dialog>
+
+  <dialog id="access-dialog" class="modal" aria-labelledby="access-title">
+    <form id="key-form" method="dialog" autocomplete="off">
+      <h2 id="access-title">API access</h2>
+      <p class="muted" id="access-reason">
+        Only needed when the server was started with API keys. The key stays in this browser
+        tab and is sent as <code>X-API-Key</code>.
+      </p>
+      <label for="api-key" class="field-label">API key</label>
+      <input type="password" id="api-key" name="api_key" maxlength="256" spellcheck="false">
+      <div class="modal-actions">
+        <button type="button" class="button quiet" id="key-clear">Forget key</button>
+        <button type="submit" class="button primary">Use key</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 </body>
 </html>

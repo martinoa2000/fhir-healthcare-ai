@@ -3,7 +3,8 @@
 The page is static HTML, CSS and vanilla JavaScript shipped inside the package, so it
 works offline, needs no build step and is installed with the wheel. It only calls the
 same public routes a client would (``/health``, ``/capabilities``, ``/query``,
-``/patient/{id}/analyze``); it has no privileged access and adds no server-side logic.
+``/query/export``, ``/patient/{id}/analyze``); it has no privileged access and adds no
+server-side logic.
 
 Assets are served from a fixed table rather than a directory mount: a request can only
 ever resolve to one of the files listed here, and ``APIRouter.include_router`` does not
@@ -23,13 +24,19 @@ _ASSETS: dict[str, str] = {
     "index.html": "text/html; charset=utf-8",
     "app.js": "text/javascript; charset=utf-8",
     "app.css": "text/css; charset=utf-8",
+    # Atkinson Hyperlegible (Braille Institute; SIL OFL, see static/FONTS-LICENSE.txt):
+    # drawn so that 1/l/I and 0/O never collide, which is what patient ids and lab
+    # values need. Bundled rather than fetched so the page stays offline-capable.
+    "atkinson-next.woff2": "font/woff2",
+    "atkinson-mono.woff2": "font/woff2",
 }
 
 #: Everything the page needs comes from this origin, and no inline script or style is
 #: used, so the policy can be strict. It is the second line of defence behind the page
 #: never inserting response data as HTML.
 _CSP = (
-    "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; "
+    "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; "
+    "connect-src 'self'; "
     "img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 )
 

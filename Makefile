@@ -22,7 +22,16 @@ help: ## Show this help
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 
 install: ## Install the package in editable mode with dev dependencies
-	$(PIP) install -e ".[dev]"
+	@$(PYTHON) -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' || \
+		{ echo ">>> Python 3.11+ is required; $(PYTHON) is $$($(PYTHON) --version 2>&1)"; exit 1; }
+	@# Virtualenvs made by `uv venv` (or `python -m venv --without-pip`) have no pip.
+	@if $(PYTHON) -m pip --version >/dev/null 2>&1; then \
+		$(PIP) install -e ".[dev]"; \
+	elif command -v uv >/dev/null 2>&1; then \
+		uv pip install --python "$$($(PYTHON) -c 'import sys; print(sys.executable)')" -e ".[dev]"; \
+	else \
+		$(PYTHON) -m ensurepip --upgrade && $(PIP) install -e ".[dev]"; \
+	fi
 
 lint: ## Run ruff lint checks
 	ruff check .

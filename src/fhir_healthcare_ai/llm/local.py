@@ -35,9 +35,10 @@ from fhir_healthcare_ai.logging_config import get_logger
 logger = get_logger(__name__)
 
 DEFAULT_VLLM_BASE_URL = "http://localhost:8001/v1"
-#: Qwen3.8-27B in the FP8 weights Qwen publishes: Apache-2.0, fits one 48 GB GPU, and
-#: needs vLLM 0.17 or newer for its hybrid-attention kernels.
-DEFAULT_VLLM_MODEL = "Qwen/Qwen3.8-27B-FP8"
+#: Qwen3.5-9B (Apache-2.0) quantised to 4 bits for MLX: about 6 GB, so it runs on a
+#: 16 GB Apple Silicon Mac under vllm-metal. The Compose GPU profile serves the original
+#: Qwen/Qwen3.5-9B weights under this same name.
+DEFAULT_VLLM_MODEL = "mlx-community/Qwen3.5-9B-MLX-4bit"
 
 #: vLLM's OpenAI server accepts any bearer token when started without `--api-key`.
 PLACEHOLDER_KEY = "local"

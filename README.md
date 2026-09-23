@@ -70,23 +70,28 @@ never silent.
 
 ### Local model
 
-The `vllm` profile serves [Qwen3.8-27B](https://huggingface.co/Qwen/Qwen3.8-27B) in the
-FP8 weights Qwen publishes (`Qwen/Qwen3.8-27B-FP8`, Apache-2.0) with
-`vllm/vllm-openai:v0.30.0`. It needs an NVIDIA GPU with about 48 GB of memory; on an
-80 GB card, or two 48 GB cards with `--tensor-parallel-size 2`, you can use the BF16
-weights instead (`LLM_MODEL=Qwen/Qwen3.8-27B`). Qwen3.8 needs vLLM 0.17 or newer.
-Thinking mode is off, both as the server default and on every request, because the
-planner needs a JSON plan and not a chain of thought (`LLM_ENABLE_THINKING=true` turns
-it back on). The first start downloads roughly 28 GB of weights into the `hf-cache`
-volume.
+The planner runs on [Qwen3.5-9B](https://huggingface.co/Qwen/Qwen3.5-9B) (Apache-2.0),
+served by vLLM on the same machine. Thinking mode is off, both as the server default and
+on every request, because the planner needs a JSON plan and not a chain of thought
+(`LLM_ENABLE_THINKING=true` turns it back on).
 
-To serve the model yourself instead of through Compose:
+**Apple Silicon Mac (16 GB is enough, e.g. a Mac mini M4).** Docker on macOS cannot use
+the Apple GPU, so vLLM runs natively through the official
+[vllm-metal](https://github.com/vllm-project/vllm-metal) plugin (macOS 15 or later),
+serving the 4-bit MLX weights `mlx-community/Qwen3.5-9B-MLX-4bit` (about 6 GB):
 
 ```bash
-vllm serve Qwen/Qwen3.8-27B-FP8 --port 8001 --max-model-len 32768 \
-  --reasoning-parser qwen3 --default-chat-template-kwargs '{"enable_thinking": false}'
-LLM_PROVIDER=vllm LLM_BASE_URL=http://localhost:8001/v1 make run
+brew tap vllm-project/vllm-metal https://github.com/vllm-project/vllm-metal
+brew install vllm-project/vllm-metal/vllm-metal
+make serve-model        # vLLM on http://localhost:8001/v1; first start downloads the weights
+make run                # in another terminal; or, for the full stack:
+LLM_BASE_URL=http://host.docker.internal:8001/v1 docker compose up --build
 ```
+
+**Linux with an NVIDIA GPU (24 GB).** `docker compose --profile vllm up --build` runs
+`vllm/vllm-openai:v0.30.0` with the original BF16 weights (`VLLM_GPU_MODEL`, default
+`Qwen/Qwen3.5-9B`, about 19 GB), published under the same model name, so nothing else
+changes.
 
 ## API
 
@@ -253,7 +258,8 @@ Everything is set through environment variables or `.env`. See
 | `FHIR_IN_MEMORY` | `false` | Serve a generated population from memory instead |
 | `FHIR_MAX_PAGE_SIZE` / `_PAGES` / `_TOTAL_RESOURCES` | 200 / 10 / 2000 | Retrieval caps |
 | `LLM_PROVIDER` | `vllm` | `vllm` (local model server) or `mock` (rule-based planner). No hosted APIs |
-| `LLM_MODEL` | `Qwen/Qwen3.8-27B-FP8` | Hub id vLLM loads and serves. Needs vLLM 0.17+ and ~48 GB of GPU memory |
+| `LLM_MODEL` | `mlx-community/Qwen3.5-9B-MLX-4bit` | Model name the vLLM server serves. The default fits a 16 GB Apple Silicon Mac |
+| `VLLM_GPU_MODEL` | `Qwen/Qwen3.5-9B` | Weights the compose `vllm` profile loads on an NVIDIA GPU (~19 GB) |
 | `LLM_ENABLE_THINKING` | `false` | Qwen3 reasoning mode for `vllm`. Off, so the planner gets a JSON plan directly |
 | `LLM_BASE_URL` | local vLLM | OpenAI-compatible endpoint for `vllm` |
 | `LLM_FALLBACK_TO_MOCK` | `true` | Degrade to the rule-based planner when the backend is down |

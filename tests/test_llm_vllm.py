@@ -65,7 +65,7 @@ async def test_thinking_mode_follows_the_setting() -> None:
 def test_defaults_point_at_the_local_server() -> None:
     provider = VLLMProvider(LLMSettings(base_url=None, model=""))
     assert provider.base_url == "http://localhost:8001/v1"
-    assert provider.model == "Qwen/Qwen3.8-27B-FP8"
+    assert provider.model == "mlx-community/Qwen3.5-9B-MLX-4bit"
 
 
 async def test_complete_sends_an_openai_compatible_request() -> None:

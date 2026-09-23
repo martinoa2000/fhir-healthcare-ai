@@ -1,33 +1,23 @@
-"""Local model backends: vLLM over HTTP, and HuggingFace transformers in-process.
+"""Local model backend: a vLLM server over HTTP.
 
-This is the project's **default** inference path. Clinical data -- even synthetic data
-standing in for clinical data -- should not leave the deployment boundary just to have a
-search query written for it, and a platform that only works when it can reach a vendor
-API is not a platform a hospital can run. Both backends here keep the model on the same
-machine, or at least on the same network, as the FHIR server.
+This is the project's only model backend. Clinical data -- even synthetic data standing
+in for clinical data -- should not leave the deployment boundary just to have a search
+query written for it, and a platform that only works when it can reach a vendor API is
+not a platform a hospital can run.
 
-Two shapes, because the two deployment stories are genuinely different:
+:class:`VLLMProvider` talks to a vLLM (or any OpenAI-compatible) server over HTTP. The
+model is a separate, independently scaled service with continuous batching, and the
+application container stays small and free of CUDA. ``docker compose --profile vllm
+up`` starts one alongside the stack.
 
-:class:`VLLMProvider`
-    Talks to a vLLM (or any OpenAI-compatible) server over HTTP. This is the production
-    shape: the model is a separate, independently scaled service with continuous
-    batching, and the application container stays small and free of CUDA. ``docker
-    compose --profile vllm up`` starts one alongside the stack.
-
-:class:`HuggingFaceProvider`
-    Loads a ``transformers`` model into this process. This is the laptop shape: no
-    server to manage, works on CPU or MPS with a small instruct model, and is the right
-    choice for a single developer poking at the pipeline.
-
-Neither sends a byte off the host unless the operator points ``base_url`` somewhere
-else. Generation is greedy by default (``temperature=0``) because the planner needs the
-same question to yield the same plan -- a benchmark over a sampling decoder measures
-the sampler as much as the model.
+Nothing is sent off the host unless the operator points ``base_url`` somewhere else.
+Generation is greedy by default (``temperature=0``) because the planner needs the same
+question to yield the same plan -- a benchmark over a sampling decoder measures the
+sampler as much as the model.
 """
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
 import httpx
@@ -45,8 +35,9 @@ from fhir_healthcare_ai.logging_config import get_logger
 logger = get_logger(__name__)
 
 DEFAULT_VLLM_BASE_URL = "http://localhost:8001/v1"
-DEFAULT_VLLM_MODEL = "Qwen/Qwen2.5-7B-Instruct"
-DEFAULT_HF_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"
+#: Qwen3.8-27B in the FP8 weights Qwen publishes: Apache-2.0, fits one 48 GB GPU, and
+#: needs vLLM 0.17 or newer for its hybrid-attention kernels.
+DEFAULT_VLLM_MODEL = "Qwen/Qwen3.8-27B-FP8"
 
 #: vLLM's OpenAI server accepts any bearer token when started without `--api-key`.
 PLACEHOLDER_KEY = "local"
@@ -95,6 +86,10 @@ class VLLMProvider(LLMProvider):
             "temperature": self.settings.temperature if temperature is None else temperature,
             "max_tokens": self.settings.max_tokens if max_tokens is None else max_tokens,
             "stream": False,
+            # Qwen3-family chat templates read this; vLLM passes it to the template and
+            # other OpenAI-compatible servers ignore it. Request-level, so it holds even
+            # when the server was started without a default.
+            "chat_template_kwargs": {"enable_thinking": self.settings.enable_thinking},
         }
         if json_mode:
             # vLLM implements guided decoding through this OpenAI-compatible field, so a
@@ -144,108 +139,3 @@ class VLLMProvider(LLMProvider):
     async def aclose(self) -> None:
         if self._owns_client:
             await self._client.aclose()
-
-
-class HuggingFaceProvider(LLMProvider):
-    """In-process ``transformers`` generation.
-
-    The model is loaded once, lazily, on the first completion rather than in the
-    constructor: building a provider must stay cheap so that ``/health`` and the
-    capability endpoints do not pull several gigabytes of weights into memory just to
-    report which backend is configured.
-
-    Generation is blocking and releases the GIL only in parts, so it runs in a worker
-    thread. Without that, one completion would stall every other request the API is
-    serving.
-    """
-
-    name = "huggingface"
-
-    def __init__(self, settings: LLMSettings | None = None, *, device: str | None = None) -> None:
-        self.settings = settings or LLMSettings()
-        self.model_id = self.settings.model or DEFAULT_HF_MODEL
-        self.device = device
-        self._pipeline: Any = None
-        self._lock = asyncio.Lock()
-
-    async def _ensure_pipeline(self) -> Any:
-        if self._pipeline is not None:
-            return self._pipeline
-        async with self._lock:
-            if self._pipeline is None:
-                self._pipeline = await asyncio.to_thread(self._load_pipeline)
-        return self._pipeline
-
-    def _load_pipeline(self) -> Any:
-        try:
-            import torch
-            from transformers import pipeline
-        except ImportError as exc:  # pragma: no cover - depends on install extras
-            raise LLMUnavailableError(
-                "transformers and torch are not installed. Install them with "
-                "`pip install 'fhir-healthcare-ai[hf]'`, use LLM_PROVIDER=vllm to talk "
-                "to a model server instead, or LLM_PROVIDER=mock for no model at all."
-            ) from exc
-
-        device = self.device or ("cuda" if torch.cuda.is_available() else "cpu")
-        logger.info(
-            "loading local model",
-            extra={"model": self.model_id, "device": device},
-        )
-        return pipeline(
-            "text-generation",
-            model=self.model_id,
-            device_map="auto" if device == "cuda" else device,
-            torch_dtype="auto",
-        )
-
-    async def complete(
-        self,
-        messages: list[LLMMessage],
-        *,
-        temperature: float | None = None,
-        max_tokens: int | None = None,
-        json_mode: bool = False,
-    ) -> LLMResponse:
-        del json_mode  # transformers has no structured-output mode; the prompt carries it
-        generator = await self._ensure_pipeline()
-        effective_temperature = self.settings.temperature if temperature is None else temperature
-        turns = [message.as_dict() for message in messages]
-
-        def _generate() -> list[dict[str, Any]]:
-            output: list[dict[str, Any]] = generator(
-                turns,
-                max_new_tokens=self.settings.max_tokens if max_tokens is None else max_tokens,
-                do_sample=effective_temperature > 0.0,
-                temperature=effective_temperature if effective_temperature > 0.0 else None,
-                return_full_text=False,
-            )
-            return output
-
-        try:
-            output = await asyncio.to_thread(_generate)
-        except Exception as exc:
-            raise LLMError(f"local generation failed: {exc}") from exc
-
-        text = _extract_generated_text(output)
-        return LLMResponse(
-            text=text,
-            model=self.model_id,
-            prompt_tokens=sum(len(turn["content"]) // 4 for turn in turns),
-            completion_tokens=len(text) // 4,
-            finish_reason="stop",
-        )
-
-    async def aclose(self) -> None:
-        self._pipeline = None
-
-
-def _extract_generated_text(output: Any) -> str:
-    """Unwrap the several shapes ``transformers`` returns for chat generation."""
-    if not output:
-        return ""
-    first = output[0] if isinstance(output, list) else output
-    generated = first.get("generated_text", "") if isinstance(first, dict) else first
-    if isinstance(generated, list):  # chat template returns the message list back
-        return str(generated[-1].get("content", "")) if generated else ""
-    return str(generated)

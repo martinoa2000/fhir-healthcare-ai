@@ -1,5 +1,10 @@
 # fhir-healthcare-ai
 
+[![CI](https://github.com/martinoa2000/fhir-healthcare-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/martinoa2000/fhir-healthcare-ai/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)
+![FHIR R4](https://img.shields.io/badge/HL7%20FHIR-R4-orange.svg)
+
 A governed AI layer over interoperable clinical data (HL7 FHIR R4).
 
 A clinician asks a question in plain language. A language model turns it into a
@@ -63,6 +68,26 @@ after that. When the vLLM server is not running, the API falls back to the
 deterministic planner and `/health` reports `"status": "degraded"`, so the fallback is
 never silent.
 
+### Local model
+
+The `vllm` profile serves [Qwen3.8-27B](https://huggingface.co/Qwen/Qwen3.8-27B) in the
+FP8 weights Qwen publishes (`Qwen/Qwen3.8-27B-FP8`, Apache-2.0) with
+`vllm/vllm-openai:v0.30.0`. It needs an NVIDIA GPU with about 48 GB of memory; on an
+80 GB card, or two 48 GB cards with `--tensor-parallel-size 2`, you can use the BF16
+weights instead (`LLM_MODEL=Qwen/Qwen3.8-27B`). Qwen3.8 needs vLLM 0.17 or newer.
+Thinking mode is off, both as the server default and on every request, because the
+planner needs a JSON plan and not a chain of thought (`LLM_ENABLE_THINKING=true` turns
+it back on). The first start downloads roughly 28 GB of weights into the `hf-cache`
+volume.
+
+To serve the model yourself instead of through Compose:
+
+```bash
+vllm serve Qwen/Qwen3.8-27B-FP8 --port 8001 --max-model-len 32768 \
+  --reasoning-parser qwen3 --default-chat-template-kwargs '{"enable_thinking": false}'
+LLM_PROVIDER=vllm LLM_BASE_URL=http://localhost:8001/v1 make run
+```
+
 ## API
 
 | Method | Path | Purpose |
@@ -114,7 +139,7 @@ threshold, which no single rule expresses, and "patients with diabetes and hyper
 needs two diagnosis steps, which one search's OR of codes cannot express.
 
 For anything else it returns `unsupported: true` with a reason instead of guessing.
-Open-ended questions need a real model (`vllm`, `huggingface`, or a hosted provider).
+Open-ended questions need the local model (`LLM_PROVIDER=vllm`).
 
 ## How a plan becomes a cohort
 
@@ -164,8 +189,9 @@ ICD-10-CM from others.
 - **Audited.** Every plan, refusal, FHIR search, analysis and response produces an
   audit event (JSONL via `AUDIT_LOG_PATH`), joined by correlation id and attributed to
   the caller's key *name* (`actor`; `anonymous` with auth off). Keys are never logged.
-- **Local by default.** The default backend is a self-hosted vLLM server. `/health`
-  reports whether inference stays on the host (`llm.local`).
+- **Local only.** The only model backend is a self-hosted vLLM server; there is no
+  hosted-API provider to misconfigure. `/health` reports the active backend and
+  `llm.local`.
 
 ## Benchmark
 
@@ -213,7 +239,7 @@ mean F1 1.0000  refusals 1.0  safety violations 0  -> PASSED
 
 The mock planner is the **control arm**. Its rules and the ground truth encode the same
 clinical readings, so a perfect score shows that the pipeline executes a correct plan
-correctly, not that the question was understood. Run the benchmark with a real provider
+correctly, not that the question was understood. Run the benchmark with `--provider vllm`
 to measure the model: any difference from the mock is attributable to the model.
 
 ## Configuration
@@ -226,8 +252,9 @@ Everything is set through environment variables or `.env`. See
 | `FHIR_BASE_URL` | `http://localhost:8080/fhir` | FHIR R4 endpoint |
 | `FHIR_IN_MEMORY` | `false` | Serve a generated population from memory instead |
 | `FHIR_MAX_PAGE_SIZE` / `_PAGES` / `_TOTAL_RESOURCES` | 200 / 10 / 2000 | Retrieval caps |
-| `LLM_PROVIDER` | `vllm` | `vllm`, `huggingface`, `mock`, `openai`, `anthropic` |
-| `LLM_MODEL` | `Qwen/Qwen2.5-7B-Instruct` | |
+| `LLM_PROVIDER` | `vllm` | `vllm` (local model server) or `mock` (rule-based planner). No hosted APIs |
+| `LLM_MODEL` | `Qwen/Qwen3.8-27B-FP8` | Hub id vLLM loads and serves. Needs vLLM 0.17+ and ~48 GB of GPU memory |
+| `LLM_ENABLE_THINKING` | `false` | Qwen3 reasoning mode for `vllm`. Off, so the planner gets a JSON plan directly |
 | `LLM_BASE_URL` | local vLLM | OpenAI-compatible endpoint for `vllm` |
 | `LLM_FALLBACK_TO_MOCK` | `true` | Degrade to the rule-based planner when the backend is down |
 | `MAX_PATIENTS_PER_RESPONSE` | 100 | Display cap. Applied after screening, never before |
@@ -257,7 +284,7 @@ in tests too.
 src/fhir_healthcare_ai/
   api/            FastAPI app: routes, request ids, health, error mapping; web UI (static/)
   pipeline/       planner, orchestrator (the fixed workflow), response generator
-  llm/            provider interface; vllm, huggingface, mock, openai, anthropic; prompts
+  llm/            provider interface; vllm (local) and mock; prompts
   fhir/           allowlist, validator, concept expander, query builder, client, parsers,
                   in-memory test server
   normalization/  raw resources -> PatientRecord
@@ -290,7 +317,18 @@ src/fhir_healthcare_ai/
 - A birth date recorded to the year only is matched the way FHIR date search matches
   ranges: a patient born "1961" counts as older than 65 on 2026-06-01, because some day
   in 1961 qualifies. The benchmark oracle applies the same reading.
-- The deterministic planner's older keyword rules still fire on one word. "Which diabetic
-  patients 65 or older have diabetic nephropathy?" names two diagnoses and an age, which
-  the parsed rules decline, and it then falls through to the `nephropathy` keyword of the
-  reduced-kidney-function rule rather than to a refusal.
+
+## Contributing and security
+
+Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md) and the
+[code of conduct](CODE_OF_CONDUCT.md). Report vulnerabilities privately as described in
+[SECURITY.md](SECURITY.md), never in a public issue. Notable changes are listed in
+[CHANGELOG.md](CHANGELOG.md).
+
+Never open an issue or pull request that contains real patient data. Everything this
+project needs can be reproduced from the synthetic generator.
+
+## License
+
+Apache License 2.0, see [LICENSE](LICENSE). The bundled web UI fonts keep their own
+license, listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

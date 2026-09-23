@@ -14,7 +14,11 @@ keywords = ["fhir", "hl7", "healthcare", "interoperability", "llm", "clinical-nl
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Healthcare Industry",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Medical Science Apps.",
 ]
 
@@ -25,19 +29,10 @@ dependencies = [
     "pydantic-settings>=2.4",
     "httpx>=0.27",
     "python-dateutil>=2.9",
-    "numpy>=1.26",
     "pandas>=2.2",
-    "scikit-learn>=1.5",
-    "PyYAML>=6.0",
 ]
 
 [project.optional-dependencies]
-# The default backend (`vllm`) needs nothing here: it speaks the OpenAI-compatible HTTP
-# API with the httpx already in `dependencies`, so the app container stays free of CUDA
-# and the model runs as its own service.
-hf = ["transformers>=4.44", "torch>=2.4", "accelerate>=0.33"]
-openai = ["openai>=1.40"]
-anthropic = ["anthropic>=0.34"]
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
@@ -45,7 +40,6 @@ dev = [
     "respx>=0.21",
     "ruff>=0.6",
     "mypy>=1.11",
-    "types-PyYAML",
     "types-python-dateutil",
 ]
 
@@ -56,6 +50,7 @@ fhir-ai-bench = "fhir_healthcare_ai.benchmark.cli:main"
 [project.urls]
 Homepage = "https://github.com/martinoa2000/fhir-healthcare-ai"
 Issues = "https://github.com/martinoa2000/fhir-healthcare-ai/issues"
+Changelog = "https://github.com/martinoa2000/fhir-healthcare-ai/blob/main/CHANGELOG.md"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/fhir_healthcare_ai"]
@@ -64,7 +59,7 @@ packages = ["src/fhir_healthcare_ai"]
 line-length = 100
 target-version = "py311"
 src = ["src", "tests"]
-# Third-party agent skills vendored by `npx skills add`; not project code.
+# Local Claude Code configuration and any locally installed agent skills; not project code.
 extend-exclude = [".claude"]
 
 [tool.ruff.lint]
@@ -101,8 +96,7 @@ explicit_package_bases = true
 mypy_path = "src"
 
 [[tool.mypy.overrides]]
-# Optional extras (`[hf]`, `[openai]`, `[anthropic]`) are imported lazily and may be absent.
-module = ["sklearn.*", "pandas.*", "respx.*", "openai.*", "anthropic.*", "torch.*", "transformers.*"]
+module = ["pandas.*", "respx.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

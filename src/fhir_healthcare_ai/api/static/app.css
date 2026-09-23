@@ -71,7 +71,22 @@
   --radius-control: 6px;
   --radius-panel: 10px;
 
+  /* Motion tokens (Emil Kowalski's standards): a strong ease-out for things that
+     appear, an iOS-like curve for the drawer. Nothing in this UI uses ease-in. */
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  --dur-press: 140ms;
+  --dur-pop: 160ms;
+  --dur-drawer: 260ms;
+
+  /* A 4px spacing scale; every gap and padding below is a multiple of it. */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 20px;
+  --s6: 24px;
+  --s8: 32px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -217,8 +232,15 @@ kbd {
   font: inherit;
   font-weight: 600;
   cursor: pointer;
-  transition: transform 120ms var(--ease-out), background-color 150ms ease;
+  transition: transform var(--dur-press) var(--ease-out), background-color 150ms ease;
   user-select: none;
+}
+
+button,
+summary,
+a,
+[role="tab"] {
+  touch-action: manipulation;
 }
 
 .button:active:not(:disabled) {
@@ -227,7 +249,7 @@ kbd {
 
 .button:disabled {
   cursor: progress;
-  opacity: 0.6;
+  opacity: 0.5;
 }
 
 .button.primary {
@@ -235,14 +257,8 @@ kbd {
   color: var(--on-scrub);
 }
 
-.button.primary:hover:not(:disabled) {
+.button.primary:active:not(:disabled) {
   background: var(--scrub-ink);
-}
-
-@media (prefers-color-scheme: dark) {
-  .button.primary:hover:not(:disabled) {
-    background: #3cb393;
-  }
 }
 
 .button.quiet {
@@ -251,7 +267,7 @@ kbd {
   color: var(--ink);
 }
 
-.button.quiet:hover {
+.button.quiet:active {
   background: var(--surface-sunk);
 }
 
@@ -261,6 +277,7 @@ input[type="password"],
 input[type="date"],
 textarea {
   font: inherit;
+  font-size: 1rem;
   color: var(--ink);
   background: var(--surface);
   border: 1px solid var(--line-strong);
@@ -275,8 +292,8 @@ textarea::placeholder {
 }
 
 input[type="checkbox"] {
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   accent-color: var(--scrub);
   margin: 0;
 }
@@ -294,7 +311,7 @@ input[type="checkbox"] {
   align-items: center;
   gap: 16px;
   flex-wrap: wrap;
-  padding: 10px 24px;
+  padding: var(--s3) var(--s6);
   background: var(--surface);
   border-bottom: 1px solid var(--line);
 }
@@ -306,15 +323,20 @@ input[type="checkbox"] {
   margin-right: auto;
 }
 
+/* The mark is a population with a selected subset: what the product does. */
 .brand-mark {
   width: 22px;
   height: 22px;
   align-self: center;
-  fill: none;
-  stroke: var(--scrub);
-  stroke-width: 2.2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+  flex: none;
+}
+
+.brand-mark circle {
+  fill: var(--line-strong);
+}
+
+.brand-mark circle.on {
+  fill: var(--scrub);
 }
 
 .brand-name {
@@ -387,7 +409,7 @@ input[type="checkbox"] {
 }
 
 .notice {
-  padding: 6px 24px;
+  padding: var(--s2) var(--s6);
   font-size: var(--t-small);
   color: var(--ink-2);
   background: var(--surface-sunk);
@@ -411,7 +433,7 @@ main {
   display: block;
   font-size: var(--t-title);
   font-weight: 700;
-  margin-bottom: 10px;
+  margin-bottom: var(--s3);
 }
 
 .ask-row {
@@ -438,8 +460,8 @@ main {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 20px;
-  margin-top: 10px;
+  gap: var(--s2) var(--s5);
+  margin-top: var(--s3);
   color: var(--ink-2);
   font-size: var(--t-small);
 }
@@ -466,11 +488,16 @@ main {
   gap: 4px 24px;
 }
 
+.section-title {
+  font-size: var(--t-body);
+  margin: var(--s2) 0 var(--s1);
+}
+
 .library-group h3 {
   font-size: var(--t-small);
   font-weight: 700;
   color: var(--ink-2);
-  padding: 10px 0 4px;
+  padding: var(--s3) 0 var(--s1);
   border-bottom: 1px solid var(--line);
   margin-bottom: 2px;
 }
@@ -480,6 +507,10 @@ main {
   list-style: none;
   margin: 0;
   padding: 0;
+}
+
+.question-link:active {
+  background: var(--scrub-wash);
 }
 
 .question-link {
@@ -497,9 +528,6 @@ main {
   line-height: 1.35;
 }
 
-.question-link:hover {
-  background: var(--scrub-wash);
-}
 
 .recent {
   font-size: var(--t-small);
@@ -525,7 +553,8 @@ main {
   border-radius: 999px;
 }
 
-.ask.compact .library {
+.ask.compact .library,
+.ask.compact .section-title {
   display: none;
 }
 
@@ -541,8 +570,8 @@ main {
 
 .derivation {
   position: sticky;
-  top: 16px;
-  padding: 18px 18px 20px;
+  top: var(--s4);
+  padding: var(--s5);
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius-panel);
@@ -562,7 +591,7 @@ main {
 
 .step {
   position: relative;
-  padding: 0 0 18px 34px;
+  padding: 0 0 var(--s5) 36px;
   counter-increment: step;
 }
 
@@ -606,6 +635,22 @@ main {
   border-color: var(--role-context);
 }
 
+.step.role-screen .step-marker {
+  border-color: var(--role-filter);
+  border-style: double;
+  border-width: 3px;
+}
+
+.outcome {
+  margin: 0 0 var(--s3);
+  padding-left: 36px;
+  color: var(--ink-2);
+}
+
+.outcome strong {
+  color: var(--ink);
+}
+
 .step.role-exclude .step-marker {
   border-color: var(--role-exclude);
   background: var(--flag-high-wash);
@@ -640,6 +685,11 @@ main {
   overflow-wrap: anywhere;
 }
 
+.param-name {
+  font-weight: 700;
+  color: var(--ink-2);
+}
+
 .step-params code {
   color: var(--ink);
 }
@@ -664,6 +714,13 @@ main {
 .assumptions {
   margin-top: 16px;
   font-size: var(--t-small);
+}
+
+.assumptions summary,
+.data-table-toggle summary,
+.features-toggle summary {
+  padding: var(--s1) 0;
+  min-height: 28px;
 }
 
 .assumptions summary {
@@ -692,7 +749,7 @@ main {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 8px 28px;
+  gap: var(--s2) var(--s8);
 }
 
 .ledger-headline {
@@ -738,7 +795,7 @@ main {
 }
 
 .narrative {
-  margin-top: 14px;
+  margin-top: var(--s4);
   padding: 12px 16px;
   border-left: 3px solid var(--scrub);
   background: var(--surface);
@@ -785,8 +842,8 @@ main {
   flex-wrap: wrap;
   align-items: flex-end;
   justify-content: space-between;
-  gap: 12px;
-  margin-top: 22px;
+  gap: var(--s3);
+  margin-top: var(--s6);
   border-bottom: 1px solid var(--line);
 }
 
@@ -813,9 +870,6 @@ main {
   border-bottom-color: var(--scrub);
 }
 
-.tabs [role="tab"]:hover {
-  color: var(--ink);
-}
 
 .toolbar-end {
   display: flex;
@@ -869,7 +923,7 @@ main {
 }
 
 .menu[open] .menu-list {
-  animation: pop 160ms var(--ease-out);
+  animation: pop var(--dur-pop) var(--ease-out);
 }
 
 @keyframes pop {
@@ -893,9 +947,6 @@ main {
   cursor: pointer;
 }
 
-.menu-list button:hover {
-  background: var(--surface-sunk);
-}
 
 .menu-list span:first-child {
   font-weight: 600;
@@ -923,7 +974,7 @@ table {
 
 th,
 td {
-  padding: 9px 12px;
+  padding: var(--s2) var(--s3);
   text-align: left;
   vertical-align: middle;
   border-bottom: 1px solid var(--line);
@@ -954,6 +1005,7 @@ td.num {
   background: none;
   border: 0;
   padding: 0;
+  min-height: 32px;
   cursor: pointer;
   display: inline-flex;
   gap: 4px;
@@ -965,9 +1017,6 @@ td.num {
   color: var(--ink-3);
 }
 
-tbody tr:hover {
-  background: var(--surface-sunk);
-}
 
 .patient-open {
   font-family: var(--font-id);
@@ -982,9 +1031,6 @@ tbody tr:hover {
   text-underline-offset: 3px;
 }
 
-.patient-open:hover {
-  text-decoration-color: currentColor;
-}
 
 .steps-matched {
   display: flex;
@@ -1240,8 +1286,13 @@ tbody tr:hover {
   background: none;
   border: 1px solid var(--line);
   border-radius: 4px;
-  padding: 2px 8px;
+  min-height: 28px;
+  padding: var(--s1) var(--s2);
   cursor: pointer;
+}
+
+.copy:active {
+  background: var(--surface-sunk);
 }
 
 .timing {
@@ -1299,7 +1350,7 @@ dialog::backdrop {
 
 .drawer[open] {
   display: flex;
-  animation: drawer-in 240ms var(--ease-out);
+  animation: drawer-in var(--dur-drawer) var(--ease-drawer);
 }
 
 @keyframes drawer-in {
@@ -1313,7 +1364,7 @@ dialog::backdrop {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 14px 20px;
+  padding: var(--s4) var(--s5);
   border-bottom: 1px solid var(--line);
 }
 
@@ -1326,7 +1377,7 @@ dialog::backdrop {
 .drawer-body {
   flex: 1;
   min-height: 0;
-  padding: 18px 20px 32px;
+  padding: var(--s5) var(--s5) var(--s8);
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -1380,8 +1431,8 @@ dialog::backdrop {
 .lab {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 4px 12px;
-  padding: 10px 0;
+  gap: var(--s1) var(--s3);
+  padding: var(--s3) 0;
   border-bottom: 1px solid var(--line);
 }
 
@@ -1510,11 +1561,11 @@ dialog::backdrop {
   width: min(460px, calc(100vw - 32px));
   border-radius: var(--radius-panel);
   box-shadow: var(--shadow);
-  padding: 22px;
+  padding: var(--s6);
 }
 
 .modal[open] {
-  animation: pop 180ms var(--ease-out);
+  animation: pop var(--dur-pop) var(--ease-out);
 }
 
 .modal h2 {
@@ -1546,6 +1597,14 @@ dialog::backdrop {
   color: var(--paper);
   box-shadow: var(--shadow);
   font-weight: 600;
+  transition: opacity 200ms var(--ease-out), transform 200ms var(--ease-out);
+}
+
+@starting-style {
+  .toast {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
 }
 
 .loading {
@@ -1566,7 +1625,7 @@ dialog::backdrop {
   height: 100%;
   width: 30%;
   background: var(--scrub);
-  animation: travel 1.1s ease-in-out infinite;
+  animation: travel 900ms linear infinite;
 }
 
 @keyframes travel {
@@ -1586,6 +1645,12 @@ dialog::backdrop {
 
 .skeleton.short {
   width: 60%;
+}
+
+/* While a new answer loads, the previous one stays readable but visibly out of date. */
+.workspace[aria-busy="true"] .results {
+  opacity: 0.55;
+  transition: opacity 150ms ease;
 }
 
 /* ------------------------------------------------------------------ responsive */
@@ -1670,13 +1735,115 @@ dialog::backdrop {
   }
 }
 
+/* Reduced motion is gentler, not zero: movement goes, opacity stays. */
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes breathe {
+  50% {
+    opacity: 0.4;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
+  .drawer[open],
+  .modal[open],
+  .menu[open] .menu-list {
+    animation: fade 160ms ease;
+  }
+
+  .button:active:not(:disabled) {
+    transform: none;
+  }
+
+  .loading-line::after {
+    width: 100%;
+    animation: breathe 1.6s ease-in-out infinite;
+  }
+
+  @starting-style {
+    .toast {
+      transform: translateX(-50%);
+    }
+  }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .button.primary:hover:not(:disabled) {
+    background: var(--scrub-ink);
+  }
+
+  .button.quiet:hover {
+    background: var(--surface-sunk);
+  }
+
+  .question-link:hover {
+    background: var(--scrub-wash);
+  }
+
+  .tabs [role="tab"]:hover {
+    color: var(--ink);
+  }
+
+  .menu-list button:hover {
+    background: var(--surface-sunk);
+  }
+
+  tbody tr:hover {
+    background: var(--surface-sunk);
+  }
+
+  .patient-open:hover {
+    text-decoration-color: currentColor;
+  }
+
+  .copy:hover {
+    border-color: var(--line-strong);
+  }
+}
+
+@media (hover: hover) and (pointer: fine) and (prefers-color-scheme: dark) {
+  .button.primary:hover:not(:disabled) {
+    background: #3cb393;
+  }
+}
+
+/* Touch: 44px targets, and a little more room between tappable rows. */
+@media (pointer: coarse) {
+  .button,
+  input[type="text"],
+  input[type="search"],
+  input[type="password"],
+  input[type="date"],
+  .tabs [role="tab"],
+  .sort,
+  .copy,
+  .skip-link,
+  .assumptions summary,
+  .data-table-toggle summary,
+  .features-toggle summary {
+    min-height: 44px;
+  }
+
+  /* Padding rather than flex, so the summary keeps its disclosure triangle. */
+  .assumptions summary,
+  .data-table-toggle summary,
+  .features-toggle summary {
+    padding: var(--s3) 0;
+  }
+
+  .question-link {
+    padding-top: var(--s3);
+    padding-bottom: var(--s3);
+  }
+
+  .toolbar-end .button,
+  .toolbar-end input[type="search"],
+  .inline-field input[type="date"] {
+    min-height: 44px;
   }
 }
 

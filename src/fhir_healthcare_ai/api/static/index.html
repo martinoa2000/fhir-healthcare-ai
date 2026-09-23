@@ -16,9 +16,13 @@
   <header class="topbar">
     <div class="brand">
       <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-        <path d="M4 12h4l2-5 4 10 2-5h4" />
+        <circle cx="5" cy="5" r="2.6" /><circle class="on" cx="12" cy="5" r="2.6" />
+        <circle cx="19" cy="5" r="2.6" /><circle class="on" cx="5" cy="12" r="2.6" />
+        <circle class="on" cx="12" cy="12" r="2.6" /><circle cx="19" cy="12" r="2.6" />
+        <circle cx="5" cy="19" r="2.6" /><circle class="on" cx="12" cy="19" r="2.6" />
+        <circle cx="19" cy="19" r="2.6" />
       </svg>
-      <span class="brand-name">Cohort Explorer</span>
+      <h1 class="brand-name">Cohort Explorer</h1>
       <span class="brand-context">over FHIR R4</span>
     </div>
 
@@ -29,7 +33,7 @@
     <form id="patient-form" class="open-patient" autocomplete="off" role="search">
       <label for="patient-id" class="visually-hidden">Open a patient by id</label>
       <input type="text" id="patient-id" name="patient_id" maxlength="64"
-             pattern="[A-Za-z0-9\-.]{1,64}" placeholder="Open patient by id" required
+             pattern="[A-Za-z0-9\-.]{1,64}" placeholder="Patient id" required
              spellcheck="false">
       <button type="submit" class="button quiet">Open</button>
     </form>
@@ -71,17 +75,23 @@
         </div>
       </form>
 
-      <div class="library" id="library" aria-label="Question library"></div>
-      <div class="recent" id="recent" hidden></div>
+      <div class="library-wrap" id="library-wrap">
+        <h2 class="section-title" id="library-title">Start from a question</h2>
+        <div class="recent" id="recent" hidden></div>
+        <div class="library" id="library" aria-labelledby="library-title"></div>
+      </div>
     </section>
 
-    <section id="workspace" class="workspace" hidden aria-live="polite" aria-busy="false">
+    <p id="announce" class="visually-hidden" role="status" aria-live="polite"></p>
+
+    <section id="workspace" class="workspace" hidden aria-busy="false" aria-labelledby="results-title">
       <aside class="derivation" aria-labelledby="derivation-title">
         <h2 id="derivation-title">How this answer was derived</h2>
         <div id="derivation"></div>
       </aside>
 
       <div class="results">
+        <h2 class="visually-hidden" id="results-title">Results</h2>
         <div id="ledger" class="ledger"></div>
         <div id="narrative" class="narrative" hidden></div>
         <div id="result-message"></div>

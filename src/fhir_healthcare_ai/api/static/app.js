@@ -354,7 +354,13 @@ async function runQuery(body) {
   button.disabled = true;
   button.textContent = "Running";
   document.querySelector(".ask").classList.add("compact");
-  showLoading(body.question);
+  $("workspace").setAttribute("aria-busy", "true");
+  announce("Running the query");
+  // Most answers arrive in well under a quarter of a second; a skeleton that flashes
+  // for 20ms reads as a glitch. It only appears when the wait is noticeable.
+  const loadingTimer = setTimeout(() => {
+    if (run === state.queryRun) showLoading(body.question);
+  }, LOADING_DELAY_MS);
 
   try {
     const response = await api("/query", {
@@ -370,6 +376,7 @@ async function runQuery(body) {
     if (run !== state.queryRun) return;
     showError(err);
   } finally {
+    clearTimeout(loadingTimer);
     if (run === state.queryRun) {
       button.disabled = false;
       button.textContent = "Run query";
@@ -378,8 +385,21 @@ async function runQuery(body) {
   }
 }
 
+const LOADING_DELAY_MS = 250;
+
+function announce(message) {
+  // Cleared first so the same sentence twice in a row is still read out.
+  const region = $("announce");
+  region.textContent = "";
+  setTimeout(() => {
+    region.textContent = message;
+  }, 50);
+}
+
 function writeUrl(body) {
   const params = new URLSearchParams({ q: body.question });
+  const patient = new URLSearchParams(location.search).get("patient");
+  if (patient) params.set("patient", patient);
   if (body.as_of) params.set("as_of", body.as_of);
   try {
     history.replaceState(null, "", `?${params}`);
@@ -409,6 +429,7 @@ function showLoading(question) {
 }
 
 function showError(err) {
+  $("workspace").hidden = false;
   clear($("ledger"));
   put(clear($("derivation")), el("p", { className: "muted", text: "No plan was produced." }));
   const title =
@@ -417,6 +438,7 @@ function showError(err) {
         : err.status === 401 ? "An API key is required"
           : err.status === 429 ? "Too many requests"
             : "The query failed";
+  announce(title);
   const guidance =
     err.status === 503 ? "Try again in a moment, or ask your administrator to check the model server."
       : err.status === 422 ? "Rephrase it, or start from one of the questions in the library."
@@ -433,6 +455,7 @@ function showError(err) {
 // ---------------------------------------------------------------------------- response
 
 function renderResponse(response) {
+  $("workspace").hidden = false;
   renderDerivation(response);
   renderLedger(response);
 
@@ -449,6 +472,7 @@ function renderResponse(response) {
         el("p", { className: "muted", text: "Nothing was read from the FHIR server. Try one of the questions in the library." })));
     $("toolbar").hidden = true;
     document.querySelector(".ask").classList.remove("compact");
+    announce("This question is outside what the planner can answer");
     return;
   }
   if ((response.validation_issues || []).length) {
@@ -460,6 +484,8 @@ function renderResponse(response) {
   }
 
   $("toolbar").hidden = false;
+  const found = (response.patients || []).length;
+  announce(`${plural(found, "patient", "patients")} found`);
   renderPatients();
   renderProfile(response);
   renderQueries(response);
@@ -479,8 +505,12 @@ function describeParam(param) {
   const more = values.length > 3 ? ` and ${values.length - 3} more` : "";
   const op = param.comparator ? `${param.comparator} ` : "";
   const unit = param.unit ? ` ${param.unit}` : "";
-  return [el("code", { text: param.modifier ? `${param.name}:${param.modifier}` : param.name }),
-    ` ${op}${shown}${more}${unit}`];
+  return [
+    el("span", { className: "param-name", text: param.modifier ? `${param.name}:${param.modifier}` : param.name }),
+    ` ${op}`,
+    el("code", { text: shown }),
+    `${more}${unit}`,
+  ];
 }
 
 function renderDerivation(response) {
@@ -507,8 +537,22 @@ function renderDerivation(response) {
           className: "step-purpose",
           text: `Runs only for the patients found in step ${index.get(step.depends_on) || step.depends_on}`,
         }),
-        count !== undefined && el("span", { className: "step-count", text: plural(count, "patient", "patients") }));
-    })),
+        count !== undefined && el("span", { className: "step-count", text: stepCountText(role, count) }));
+    }),
+    // Screening happens after retrieval, so it is not a plan step -- but it is where
+    // "120 patients with a potassium result" becomes "6 with an abnormal one", and a
+    // derivation that skipped it would not add up.
+    plan.analysis.options && plan.analysis.options.require_abnormal && el("li", { className: "step role-screen" },
+      el("span", { className: "step-marker", "aria-hidden": "true" }),
+      el("p", { className: "step-role", text: "Keeps abnormal results only" }),
+      el("p", { className: "step-title", text: "Reference interval screen" }),
+      el("p", {
+        className: "step-purpose",
+        text: `A patient stays only with a ${(plan.analysis.concepts || []).join(", ") || "screened"} result outside the sex-specific reference interval.`,
+      }))),
+    el("p", { className: "outcome" },
+      "Result: ",
+      el("strong", { text: plural(response.cohort ? response.cohort.total_patients : (response.patients || []).length, "patient", "patients") })),
     el("p", {
       className: "logic",
       text: plan.cohort_logic === "any"
@@ -523,6 +567,12 @@ function renderDerivation(response) {
       el("summary", { text: `Assumptions and notes (${notes.length})` }),
       el("ul", null, notes.map((note) => el("li", { text: note })))));
   }
+}
+
+function stepCountText(role, count) {
+  if (role === "exclude") return `${plural(count, "patient", "patients")} removed`;
+  if (role === "context") return `Data for ${plural(count, "patient", "patients")}`;
+  return plural(count, "patient", "patients");
 }
 
 function renderLedger(response) {
@@ -584,7 +634,13 @@ function renderPatients() {
   const rows = patientRows();
   const hasRisk = rows.some((row) => row.risk !== null);
   const hasLabs = state.analyses.size > 0;
-  const columns = COLUMNS.filter((c) => (c.needs === "risk" ? hasRisk : c.needs === "labs" ? hasLabs : true));
+  // With one selecting step every row says the same thing; the rail already says it.
+  const variedMatch = new Set(rows.map((row) => (row.match.matched_steps || []).join("|"))).size > 1;
+  const columns = COLUMNS.filter((c) =>
+    c.needs === "risk" ? hasRisk
+      : c.needs === "labs" ? hasLabs
+        : c.key === "matched" ? variedMatch
+          : true);
 
   const needle = state.filter.toLowerCase();
   const visible = rows.filter((row) =>
@@ -913,6 +969,12 @@ function setupExport() {
   document.addEventListener("click", (event) => {
     if (menu.open && !menu.contains(event.target)) menu.open = false;
   });
+  menu.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && menu.open) {
+      menu.open = false;
+      menu.querySelector("summary").focus();
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------- patient drawer
@@ -920,6 +982,7 @@ function setupExport() {
 function setupDrawer() {
   const drawer = $("patient-drawer");
   $("drawer-close").addEventListener("click", () => drawer.close());
+  drawer.addEventListener("close", () => setUrlParam("patient", null));
   drawer.addEventListener("click", (event) => {
     if (event.target === drawer) drawer.close();
   });
@@ -931,8 +994,21 @@ function setupDrawer() {
   });
 }
 
+function setUrlParam(name, value) {
+  const params = new URLSearchParams(location.search);
+  if (value) params.set(name, value);
+  else params.delete(name);
+  const query = params.toString();
+  try {
+    history.replaceState(null, "", query ? `?${query}` : location.pathname);
+  } catch (_) {
+    /* sandboxed documents may refuse history changes */
+  }
+}
+
 async function openPatient(patientId, match) {
   const drawer = $("patient-drawer");
+  setUrlParam("patient", patientId);
   $("drawer-title").textContent = patientId;
   const body = clear($("drawer-body"));
   put(body, el("div", { className: "loading", "aria-hidden": "true" },
@@ -1108,6 +1184,8 @@ function setupShortcuts() {
 function restoreFromUrl() {
   const params = new URLSearchParams(location.search);
   const question = params.get("q");
+  const patient = params.get("patient");
+  if (patient && /^[A-Za-z0-9\-.]{1,64}$/.test(patient)) openPatient(patient, null);
   if (!question) return;
   $("question").value = question;
   const asOf = params.get("as_of");

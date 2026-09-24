@@ -4,6 +4,7 @@
 .env
 .env.*
 !.env.example
+.github/
 
 # --- Generated clinical data ---------------------------------------------------------
 # The synthetic cohort is reproducible from a seed (`make seed`, `fhir-ai-seed`), so the
@@ -59,8 +60,7 @@ htmlcov/
 # --- Claude Code ---------------------------------------------------------------------
 # Agent skills are installed per developer (`npx skills add`), not shipped with the repo.
 # The session hook and settings in .claude/ stay versioned.
-.claude/skills/
-.claude/settings.local.json
+.claude/
 skills-lock.json
 
 # --- Editors and OS ------------------------------------------------------------------

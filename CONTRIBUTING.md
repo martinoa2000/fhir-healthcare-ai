@@ -23,7 +23,7 @@ Python 3.11 or newer.
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 make install        # pip install -e ".[dev]"
-make check          # lint + typecheck + unit tests + benchmark: what CI runs
+make check          # lint + typecheck + unit tests + benchmark
 ```
 
 `make help` lists every target. `make demo` starts the API and web UI on an in-memory
@@ -38,8 +38,7 @@ runs the integration tests against a live HAPI FHIR server.
 3. Add or update tests. A new question shape needs a planner test, and usually a
    benchmark case in `benchmark/cases.py` whose ground truth is computed independently
    of the pipeline.
-4. Run `make check` and `ruff format .` before pushing. CI runs the same checks on
-   Python 3.11 and 3.12 and builds the container image.
+4. Run `make check` and `ruff format .` before pushing.
 5. Update `README.md` and `CHANGELOG.md` when behaviour, configuration or the API
    changes.
 

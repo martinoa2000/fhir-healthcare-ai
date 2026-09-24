@@ -1,6 +1,5 @@
 # fhir-healthcare-ai
 
-[![CI](https://github.com/martinoa2000/fhir-healthcare-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/martinoa2000/fhir-healthcare-ai/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 ![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)
 ![FHIR R4](https://img.shields.io/badge/HL7%20FHIR-R4-orange.svg)
@@ -211,7 +210,7 @@ scores the returned cohort against ground truth computed directly from the raw
 resources. That ground-truth code shares no code with the pipeline, only the
 terminology. It also checks refusals, including a prompt-injection case, and fails the
 run if any request other than a GET of an allowlisted resource reaches the server.
-The exit status is non-zero on failure, so CI gates on it.
+The exit status is non-zero on failure, so it can gate a build.
 
 Current result for the deterministic planner:
 
@@ -273,7 +272,7 @@ Everything is set through environment variables or `.env`. See
 ## Development
 
 ```bash
-make check              # lint + typecheck + unit tests + benchmark (what CI runs)
+make check              # lint + typecheck + unit tests + benchmark
 make test               # unit tests only; no server, no model
 make cov                # with coverage
 make up && make test-integration   # against the live HAPI stack

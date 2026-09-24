@@ -19,7 +19,7 @@ First public version.
   off. On a 16 GB Apple Silicon Mac, vllm-metal serves the 4-bit MLX weights
   (`mlx-community/Qwen3.5-9B-MLX-4bit`, `make serve-model`); the compose `vllm`
   profile serves the original weights on a 24 GB NVIDIA GPU. Also included is a
-  deterministic rule-based planner used by CI and as an automatic, reported fallback.
+  deterministic rule-based planner used by the tests and as an automatic, reported fallback.
   No hosted-API provider exists, so question text never leaves the deployment.
 - The rule-based planner refuses any question with a criterion it cannot express,
   rather than answering part of it.
@@ -33,10 +33,10 @@ First public version.
 - Seeded synthetic population generator and loader (`fhir-ai-seed`), in-memory FHIR
   server for tests and demos.
 - `fhir-ai-bench` benchmark scoring cohorts against independently computed ground
-  truth, refusals and safety violations; gated in CI.
+  truth, refusals and safety violations; exits non-zero on failure.
 - Docker image and Compose stack with HAPI FHIR, seeder and optional vLLM.
-- Apache-2.0 `LICENSE`, third-party notices, security policy, contributing guide, code
-  of conduct, issue and pull request templates, and Dependabot.
+- Apache-2.0 `LICENSE`, third-party notices, security policy, contributing guide and
+  code of conduct.
 
 [Unreleased]: https://github.com/martinoa2000/fhir-healthcare-ai/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/martinoa2000/fhir-healthcare-ai/releases/tag/v0.1.0

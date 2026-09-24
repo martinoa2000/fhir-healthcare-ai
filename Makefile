@@ -45,7 +45,7 @@ format: ## Auto-format the codebase with ruff
 typecheck: ## Run mypy over src/
 	mypy src
 
-check: lint typecheck test bench ## Everything CI runs
+check: lint typecheck test bench ## Lint, type-check, unit tests and benchmark
 
 test: ## Run unit tests (no live FHIR server required)
 	pytest -m "not integration"

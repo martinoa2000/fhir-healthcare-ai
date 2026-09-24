@@ -76,7 +76,7 @@ def _display_name(resource: dict[str, Any]) -> str | None:
     """Human name, preferring ``official`` use.
 
     Synthetic data only. Real deployments should strip this before it reaches a model
-    or a log line -- see ``docs/security-privacy.md``.
+    or a log line.
     """
     names = get_list(resource, "name")
     chosen = next((n for n in names if isinstance(n, dict) and n.get("use") == "official"), None)

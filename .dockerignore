@@ -1,11 +1,12 @@
 # Keep the build context small and deterministic. Anything not needed to build
 # the wheel (pyproject.toml, README.md, src/) should be excluded here.
 
-# VCS and CI
+# VCS and local tooling
 .git
 .gitignore
 .github
 .gitattributes
+.claude
 
 # Local secrets and environment
 .env
@@ -45,7 +46,6 @@ data/
 # Tests and docs are not needed at image build time
 tests/
 docs/
-scripts/
 
 # Infra files (changing them must not bust the build cache)
 Dockerfile

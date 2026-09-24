@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- README: screenshot of the web UI, a rendered architecture diagram, a safety-model
+  table, and the long reference sections folded.
+
+### Removed
+
+- The unused `respx` development dependency and stale references to files that no
+  longer exist.
+
 ## [0.2.0] - 2026-09-24
 
 ### Changed

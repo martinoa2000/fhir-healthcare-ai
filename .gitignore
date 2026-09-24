@@ -60,7 +60,6 @@ htmlcov/
 # GitHub settings and Claude Code configuration are kept per developer, not in the repo.
 .github/
 .claude/
-skills-lock.json
 
 # --- Editors and OS ------------------------------------------------------------------
 .idea/
@@ -69,8 +68,3 @@ skills-lock.json
 *.swo
 .DS_Store
 Thumbs.db
-
-# --- Notebooks -----------------------------------------------------------------------
-# Notebooks are for exploration only; no business logic lives in them. Checkpoints are
-# pure noise.
-.ipynb_checkpoints/

@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-24
+
 ### Changed
 
 - Web UI: the derivation is drawn as a cohort flow diagram, one box per search with
@@ -46,5 +48,6 @@ First public version.
 - Apache-2.0 `LICENSE`, third-party notices, security policy, contributing guide and
   code of conduct.
 
-[Unreleased]: https://github.com/martinoa2000/fhir-healthcare-ai/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/martinoa2000/fhir-healthcare-ai/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/martinoa2000/fhir-healthcare-ai/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/martinoa2000/fhir-healthcare-ai/releases/tag/v0.1.0

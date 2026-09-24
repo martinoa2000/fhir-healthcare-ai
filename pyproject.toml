@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "fhir-healthcare-ai"
-version = "0.1.0"
+version = "0.2.0"
 description = "A governed AI layer over interoperable clinical data (HL7 FHIR R4)"
 readme = "README.md"
 requires-python = ">=3.11"

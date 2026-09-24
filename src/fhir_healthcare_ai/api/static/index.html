@@ -23,7 +23,6 @@
         <circle cx="19" cy="19" r="2.6" />
       </svg>
       <h1 class="brand-name">Cohort Explorer</h1>
-      <span class="brand-context">over FHIR R4</span>
     </div>
 
     <div id="status" class="status" aria-live="polite">
@@ -32,6 +31,9 @@
 
     <form id="patient-form" class="open-patient" autocomplete="off" role="search">
       <label for="patient-id" class="visually-hidden">Open a patient by id</label>
+      <svg class="field-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <circle cx="11" cy="11" r="6.5" /><path d="M16 16l4.5 4.5" />
+      </svg>
       <input type="text" id="patient-id" name="patient_id" maxlength="64"
              pattern="[A-Za-z0-9\-.]{1,64}" placeholder="Patient id" required
              spellcheck="false">
@@ -51,32 +53,38 @@
   <main id="main">
     <section class="ask" aria-labelledby="ask-title">
       <form id="query-form" autocomplete="off">
-        <label for="question" id="ask-title" class="ask-title">
-          Ask about the patient population
-        </label>
-        <div class="ask-row">
-          <textarea id="question" name="question" rows="2" minlength="3" maxlength="1000"
-                    required spellcheck="true"
-                    placeholder="Which diabetic patients are not on a statin?"></textarea>
-          <button type="submit" id="run" class="button primary">Run query</button>
+        <div class="ask-head">
+          <label for="question" id="ask-title" class="ask-title">
+            Ask about the patient population
+          </label>
+          <p class="ask-sub" id="ask-sub">
+            Each question becomes read-only FHIR searches that are checked before they run.
+            Every patient in the answer comes with the records that put them there.
+          </p>
         </div>
-        <div class="ask-options">
-          <label class="inline-field">
-            Reference date
-            <input type="date" id="as-of" name="as_of">
-          </label>
-          <label class="inline-field">
-            <input type="checkbox" id="narrate" name="narrate" checked>
-            Written summary
-          </label>
-          <span class="hint" id="shortcut-hint">
-            <kbd>/</kbd> to focus, <kbd>Ctrl</kbd>+<kbd>Enter</kbd> to run
-          </span>
+        <div class="composer">
+          <textarea id="question" name="question" rows="2" minlength="3" maxlength="1000"
+                    required spellcheck="true" aria-describedby="ask-sub"
+                    placeholder="Which diabetic patients are not on a statin?"></textarea>
+          <div class="composer-bar">
+            <label class="inline-field">
+              Reference date
+              <input type="date" id="as-of" name="as_of">
+            </label>
+            <label class="inline-field">
+              <input type="checkbox" id="narrate" name="narrate" checked>
+              Written summary
+            </label>
+            <span class="hint" id="shortcut-hint">
+              <kbd>/</kbd> to focus, <kbd>Ctrl</kbd>+<kbd>Enter</kbd> to run
+            </span>
+            <button type="submit" id="run" class="button primary">Run query</button>
+          </div>
         </div>
       </form>
 
       <div class="library-wrap" id="library-wrap">
-        <h2 class="section-title" id="library-title">Start from a question</h2>
+        <h2 class="section-title" id="library-title">Example questions</h2>
         <div class="recent" id="recent" hidden></div>
         <div class="library" id="library" aria-labelledby="library-title"></div>
       </div>
@@ -85,14 +93,15 @@
     <p id="announce" class="visually-hidden" role="status" aria-live="polite"></p>
 
     <section id="workspace" class="workspace" hidden aria-busy="false" aria-labelledby="results-title">
+      <h2 class="visually-hidden" id="results-title">Results</h2>
+      <div id="ledger" class="ledger"></div>
+
       <aside class="derivation" aria-labelledby="derivation-title">
-        <h2 id="derivation-title">How this answer was derived</h2>
+        <h2 id="derivation-title">How the cohort was built</h2>
         <div id="derivation"></div>
       </aside>
 
       <div class="results">
-        <h2 class="visually-hidden" id="results-title">Results</h2>
-        <div id="ledger" class="ledger"></div>
         <div id="narrative" class="narrative" hidden></div>
         <div id="result-message"></div>
 

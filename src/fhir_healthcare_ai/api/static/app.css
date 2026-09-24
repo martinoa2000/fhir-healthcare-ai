@@ -67,6 +67,8 @@
   --t-lead: 1.125rem;
   --t-title: 1.35rem;
   --t-display: 1.625rem;
+  --t-hero: 1.75rem;
+  --t-count: 2.25rem;
 
   --radius-control: 6px;
   --radius-panel: 10px;
@@ -87,6 +89,9 @@
   --s5: 20px;
   --s6: 24px;
   --s8: 32px;
+  --s10: 40px;
+
+  --page: 1320px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -309,16 +314,16 @@ input[type="checkbox"] {
 .topbar {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: var(--s3) var(--s4);
   flex-wrap: wrap;
-  padding: var(--s3) var(--s6);
+  padding: var(--s3) max(var(--s6), calc((100% - var(--page)) / 2));
   background: var(--surface);
   border-bottom: 1px solid var(--line);
 }
 
 .brand {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 10px;
   margin-right: auto;
 }
@@ -327,7 +332,6 @@ input[type="checkbox"] {
 .brand-mark {
   width: 22px;
   height: 22px;
-  align-self: center;
   flex: none;
 }
 
@@ -345,23 +349,30 @@ input[type="checkbox"] {
   letter-spacing: -0.01em;
 }
 
-.brand-context {
-  color: var(--ink-3);
-  font-size: var(--t-small);
-}
-
 .status {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px 14px;
+  gap: var(--s2);
   font-size: var(--t-small);
   color: var(--ink-2);
 }
 
+/* Each system the answer depends on, with its state: a label, not a sentence. */
 .status-item {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--paper);
+  white-space: nowrap;
+}
+
+.status-key {
+  font-weight: 700;
+  color: var(--ink);
 }
 
 .status-dot {
@@ -384,7 +395,8 @@ input[type="checkbox"] {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 2px 8px;
+  min-height: 28px;
+  padding: 0 10px;
   border-radius: 999px;
   background: var(--caution-wash);
   color: var(--ink);
@@ -399,17 +411,33 @@ input[type="checkbox"] {
 }
 
 .open-patient {
+  position: relative;
   display: flex;
   gap: 6px;
 }
 
+.field-icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  transform: translateY(-50%);
+  fill: none;
+  stroke: var(--ink-3);
+  stroke-width: 2;
+  stroke-linecap: round;
+  pointer-events: none;
+}
+
 .open-patient input {
-  width: 13rem;
+  width: 12rem;
+  padding-left: 32px;
   font-family: var(--font-id);
 }
 
 .notice {
-  padding: var(--s2) var(--s6);
+  padding: var(--s2) max(var(--s6), calc((100% - var(--page)) / 2));
   font-size: var(--t-small);
   color: var(--ink-2);
   background: var(--surface-sunk);
@@ -419,51 +447,82 @@ input[type="checkbox"] {
 /* ------------------------------------------------------------------ ask */
 
 main {
-  max-width: 1440px;
+  max-width: calc(var(--page) + 2 * var(--s6));
   margin: 0 auto;
-  padding: 24px;
+  padding: var(--s8) var(--s6) var(--s10);
 }
 
 .ask {
   display: grid;
-  gap: 16px;
+  gap: var(--s6);
+}
+
+.ask-head {
+  display: grid;
+  gap: var(--s2);
+  margin-bottom: var(--s4);
 }
 
 .ask-title {
   display: block;
-  font-size: var(--t-title);
-  font-weight: 700;
-  margin-bottom: var(--s3);
+  font-size: var(--t-hero);
+  font-weight: 800;
+  letter-spacing: -0.015em;
+  line-height: 1.2;
 }
 
-.ask-row {
-  display: flex;
-  gap: 10px;
-  align-items: stretch;
+.ask-sub {
+  max-width: 68ch;
+  color: var(--ink-2);
 }
 
-.ask-row textarea {
-  flex: 1;
+/* The question and everything that shapes it sit in one surface, so the run button
+   reads as part of the question rather than a separate control. */
+.composer {
+  max-width: 960px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-panel);
+  box-shadow: 0 1px 2px rgb(23 38 42 / 0.05);
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.composer:focus-within {
+  border-color: var(--scrub);
+  box-shadow: 0 0 0 3px var(--scrub-wash);
+}
+
+.composer textarea {
+  display: block;
+  width: 100%;
   resize: vertical;
   font-size: var(--t-lead);
-  line-height: 1.4;
-  padding: 12px 14px;
-  min-height: 60px;
+  line-height: 1.45;
+  padding: var(--s4) var(--s4) var(--s3);
+  min-height: 84px;
+  border: 0;
+  border-radius: var(--radius-panel) var(--radius-panel) 0 0;
+  background: transparent;
 }
 
-.ask-row .button {
-  min-height: 60px;
-  padding: 0 24px;
+/* The composer draws the focus ring for its textarea. */
+.composer textarea:focus-visible {
+  outline: none;
 }
 
-.ask-options {
+.composer-bar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--s2) var(--s5);
-  margin-top: var(--s3);
+  padding: var(--s2) var(--s2) var(--s2) var(--s4);
+  border-top: 1px solid var(--line);
   color: var(--ink-2);
   font-size: var(--t-small);
+}
+
+.composer-bar .button {
+  min-width: 8.5rem;
 }
 
 .inline-field {
@@ -484,22 +543,22 @@ main {
 
 .library {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 4px 24px;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--s2) var(--s8);
 }
 
 .section-title {
-  font-size: var(--t-body);
-  margin: var(--s2) 0 var(--s1);
+  font-size: var(--t-lead);
+  margin-bottom: var(--s1);
 }
 
 .library-group h3 {
   font-size: var(--t-small);
   font-weight: 700;
   color: var(--ink-2);
-  padding: var(--s3) 0 var(--s1);
+  padding: var(--s4) 0 var(--s2);
   border-bottom: 1px solid var(--line);
-  margin-bottom: 2px;
+  margin-bottom: var(--s1);
 }
 
 .library-group ul,
@@ -521,13 +580,12 @@ main {
   color: var(--ink);
   background: none;
   border: 0;
-  border-radius: 4px;
-  padding: 6px 8px;
-  margin: 0 -8px;
+  border-radius: var(--radius-control);
+  padding: 7px 10px;
+  margin: 0 -10px;
   cursor: pointer;
   line-height: 1.35;
 }
-
 
 .recent {
   font-size: var(--t-small);
@@ -536,7 +594,7 @@ main {
 .recent h3 {
   font-size: var(--t-small);
   color: var(--ink-2);
-  margin-bottom: 4px;
+  margin-bottom: var(--s2);
 }
 
 .recent ul {
@@ -549,38 +607,54 @@ main {
   width: auto;
   margin: 0;
   border: 1px solid var(--line);
-  padding: 4px 10px;
+  background: var(--surface);
+  padding: 4px 12px;
   border-radius: 999px;
 }
 
 .ask.compact .library,
-.ask.compact .section-title {
+.ask.compact .section-title,
+.ask.compact .ask-sub {
   display: none;
+}
+
+.ask.compact .ask-head {
+  margin-bottom: 0;
+}
+
+.ask.compact .ask-title {
+  font-size: var(--t-lead);
 }
 
 /* ------------------------------------------------------------------ workspace */
 
 .workspace {
   display: grid;
-  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
-  gap: 24px;
-  margin-top: 28px;
+  grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+  gap: var(--s6) var(--s8);
+  margin-top: var(--s8);
+  padding-top: var(--s8);
+  border-top: 1px solid var(--line);
   align-items: start;
 }
 
 .derivation {
+  /* x of the main line inside a box, and how far an exclusion branches off it. */
+  --spine: 20px;
+  --branch: 44px;
   position: sticky;
   top: var(--s4);
-  padding: var(--s5);
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-panel);
 }
 
 .derivation h2 {
   font-size: var(--t-body);
-  margin-bottom: 14px;
+  margin-bottom: var(--s4);
 }
+
+/* ---- Cohort flow. The derivation is drawn the way clinical research reports how a
+   cohort was formed (a CONSORT diagram): one box per search with its n, exclusions
+   branching off the main line, and the cohort as the last box. The lines are the
+   sequence itself, so they are drawn, not decorated. */
 
 .steps {
   list-style: none;
@@ -589,82 +663,115 @@ main {
   counter-reset: step;
 }
 
-.step {
+.step,
+.outcome {
   position: relative;
-  padding: 0 0 var(--s5) 36px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: var(--s3);
+  padding: var(--s3) var(--s4);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+}
+
+.step {
   counter-increment: step;
 }
 
-/* The connector between steps is the sequence itself, so it is drawn, not decorated. */
-.step::before {
-  content: "";
-  position: absolute;
-  left: 11px;
-  top: 26px;
-  bottom: 2px;
-  width: 2px;
-  background: var(--line);
+.step + .step,
+.outcome {
+  margin-top: var(--s6);
 }
 
-.step:last-child::before {
-  display: none;
+.step > * {
+  grid-column: 1;
+}
+
+/* The main line: from the box above to this one. */
+.step + .step::before,
+.outcome::before {
+  content: "";
+  position: absolute;
+  left: calc(var(--spine) - 1px);
+  top: calc(-1 * var(--s6) - 1px);
+  height: var(--s6);
+  width: 2px;
+  background: var(--line-strong);
+}
+
+/* An exclusion leaves the main line to the side, as in the diagram it comes from. */
+.step.role-exclude {
+  margin-left: var(--branch);
+  border-color: color-mix(in srgb, var(--role-exclude) 45%, var(--line));
+}
+
+.step.role-exclude::before {
+  left: calc(var(--spine) - var(--branch) - 1px);
+  height: calc(var(--s6) + 22px);
+  width: calc(var(--branch) - var(--spine) + 1px);
+  background: none;
+  border-left: 2px solid var(--line-strong);
+  border-bottom: 2px solid var(--role-exclude);
+  border-bottom-left-radius: 8px;
+}
+
+/* ...while the main line carries on past it to the next box. */
+.step.role-exclude::after {
+  content: "";
+  position: absolute;
+  left: calc(var(--spine) - var(--branch) - 1px);
+  top: -1px;
+  bottom: calc(-1 * var(--s6) - 1px);
+  width: 2px;
+  background: var(--line-strong);
+}
+
+.step.role-context {
+  border-style: dashed;
 }
 
 .step-marker {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 24px;
-  height: 24px;
-  display: grid;
-  place-items: center;
-  font-size: var(--t-small);
-  font-weight: 700;
-  border-radius: 50%;
-  color: var(--ink);
-  background: var(--surface);
-  border: 2px solid var(--role-filter);
-}
-
-.step-marker::after {
-  content: counter(step);
-}
-
-.step.role-context .step-marker {
-  border-style: dashed;
-  border-color: var(--role-context);
-}
-
-.step.role-screen .step-marker {
-  border-color: var(--role-filter);
-  border-style: double;
-  border-width: 3px;
-}
-
-.outcome {
-  margin: 0 0 var(--s3);
-  padding-left: 36px;
-  color: var(--ink-2);
-}
-
-.outcome strong {
-  color: var(--ink);
-}
-
-.step.role-exclude .step-marker {
-  border-color: var(--role-exclude);
-  background: var(--flag-high-wash);
+  display: none;
 }
 
 .step-role {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: var(--t-small);
   font-weight: 700;
   color: var(--ink-2);
+}
+
+.step-role::before {
+  content: counter(step);
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  font-size: 0.75rem;
+  color: var(--on-scrub);
+  background: var(--role-filter);
+  font-variant-numeric: tabular-nums;
+}
+
+.step.role-exclude .step-role::before {
+  background: var(--role-exclude);
+}
+
+.step.role-context .step-role::before {
+  background: var(--role-context);
+}
+
+.step.role-screen .step-role::before {
+  content: "\2713";
 }
 
 .step-title {
   font-weight: 700;
-  margin-top: 1px;
+  margin-top: var(--s1);
 }
 
 .step-purpose {
@@ -674,8 +781,9 @@ main {
 }
 
 .step-params {
-  margin: 6px 0 0;
-  padding: 0;
+  margin: var(--s2) 0 0;
+  padding: var(--s2) 0 0;
+  border-top: 1px solid var(--line);
   list-style: none;
   font-size: var(--t-small);
   color: var(--ink-2);
@@ -694,25 +802,62 @@ main {
   color: var(--ink);
 }
 
+/* n is the headline of every box. */
 .step-count {
-  display: inline-block;
-  margin-top: 6px;
-  font-size: var(--t-small);
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  display: grid;
+  justify-items: end;
+  align-content: start;
+  text-align: right;
+  line-height: 1.1;
+}
+
+.step-count strong {
+  font-size: var(--t-display);
+  font-weight: 800;
+  letter-spacing: -0.01em;
   font-variant-numeric: tabular-nums;
-  color: var(--ink);
-  font-weight: 600;
+}
+
+.step-count span {
+  font-size: var(--t-small);
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+.step.role-exclude .step-count strong {
+  color: var(--role-exclude);
+}
+
+.outcome {
+  align-items: center;
+  border: 2px solid var(--scrub);
+  background: var(--scrub-wash);
+}
+
+.outcome-label {
+  font-weight: 800;
+}
+
+.outcome .step-count {
+  grid-row: auto;
+}
+
+.outcome .step-count strong {
+  color: var(--scrub-ink);
 }
 
 .logic {
-  margin: 4px 0 0;
-  padding-top: 12px;
-  border-top: 1px solid var(--line);
+  margin-top: var(--s3);
   font-size: var(--t-small);
-  color: var(--ink-2);
+  color: var(--ink-3);
 }
 
 .assumptions {
-  margin-top: 16px;
+  margin-top: var(--s5);
+  padding-top: var(--s3);
+  border-top: 1px solid var(--line);
   font-size: var(--t-small);
 }
 
@@ -745,33 +890,63 @@ main {
   min-width: 0;
 }
 
+/* The answer's header spans both columns: the question, then how many and at what cost. */
 .ledger {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: var(--s3);
+}
+
+.ledger:empty {
+  display: none;
+}
+
+.question-echo {
+  font-size: var(--t-hero);
+  font-weight: 800;
+  letter-spacing: -0.015em;
+  line-height: 1.2;
+  max-width: 40ch;
+  text-wrap: balance;
+}
+
+.ledger-row {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: var(--s2) var(--s8);
+  gap: var(--s2) var(--s6);
 }
 
 .ledger-headline {
-  font-size: var(--t-display);
+  font-size: var(--t-count);
   font-weight: 800;
-  letter-spacing: -0.01em;
+  line-height: 1;
+  letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
+  color: var(--scrub-ink);
 }
 
 .ledger-headline small {
   font-size: var(--t-lead);
-  font-weight: 600;
+  font-weight: 700;
+  letter-spacing: 0;
   color: var(--ink-2);
-  margin-left: 6px;
+  margin-left: 8px;
 }
 
 .ledger dl {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 24px;
+  gap: var(--s2) 0;
   margin: 0;
   font-size: var(--t-small);
+}
+
+.ledger dl div {
+  display: flex;
+  gap: 6px;
+  padding: 0 var(--s4);
+  border-left: 1px solid var(--line);
 }
 
 .ledger dt {
@@ -780,24 +955,18 @@ main {
 
 .ledger dd {
   margin: 0;
-  font-weight: 600;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
 
-.ledger dl div {
-  display: flex;
-  gap: 6px;
-}
-
-.question-echo {
-  flex-basis: 100%;
+.ledger .loading .question-echo {
   color: var(--ink-2);
 }
 
 .narrative {
-  margin-top: var(--s4);
-  padding: 12px 16px;
+  padding: var(--s3) var(--s4);
   border-left: 3px solid var(--scrub);
+  border-radius: 0 var(--radius-control) var(--radius-control) 0;
   background: var(--surface);
   color: var(--ink);
   max-width: 78ch;
@@ -974,7 +1143,7 @@ table {
 
 th,
 td {
-  padding: var(--s2) var(--s3);
+  padding: 10px var(--s4);
   text-align: left;
   vertical-align: middle;
   border-bottom: 1px solid var(--line);
@@ -989,6 +1158,7 @@ th {
   font-weight: 700;
   color: var(--ink-2);
   background: var(--surface);
+  border-bottom-color: var(--line-strong);
   position: sticky;
   top: 0;
   white-space: nowrap;
@@ -1025,10 +1195,12 @@ td.num {
   background: none;
   border: 0;
   padding: 4px 0;
+  font-weight: 600;
   cursor: pointer;
   text-decoration: underline;
-  text-decoration-color: var(--line-strong);
+  text-decoration-color: transparent;
   text-underline-offset: 3px;
+  transition: text-decoration-color 150ms ease;
 }
 
 
@@ -1660,6 +1832,11 @@ dialog::backdrop {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .status {
+    order: 3;
+    flex-basis: 100%;
+  }
+
   .derivation {
     position: static;
   }
@@ -1678,9 +1855,22 @@ dialog::backdrop {
     padding: 6px 16px;
   }
 
-  .brand-context,
   .hint {
     display: none;
+  }
+
+  .ask-title,
+  .question-echo {
+    font-size: var(--t-title);
+  }
+
+  .composer-bar .button {
+    flex: 1 1 100%;
+    min-height: 44px;
+  }
+
+  .composer-bar {
+    padding: var(--s3);
   }
 
   .brand {
@@ -1700,14 +1890,6 @@ dialog::backdrop {
 
   .open-patient .button {
     flex: none;
-  }
-
-  .ask-row {
-    flex-direction: column;
-  }
-
-  .ask-row .button {
-    min-height: 48px;
   }
 
   .toolbar-end {

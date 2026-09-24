@@ -189,14 +189,17 @@ async function loadStatus() {
   try {
     const health = await api("/health");
     const fhirOk = health.fhir.reachable;
+    const planner = health.llm.active === "mock" ? "Rule-based" : health.llm.model;
     const items = [
       el("span", { className: "status-item", title: health.fhir.base_url },
         el("span", { className: `status-dot ${fhirOk ? "ok" : "bad"}`, "aria-hidden": "true" }),
-        fhirOk
-          ? `FHIR server connected${health.fhir.in_memory ? " (in-memory demo data)" : ""}`
-          : "FHIR server unreachable"),
-      el("span", { className: "status-item", title: `configured: ${health.llm.configured}` },
-        `Planner: ${health.llm.model}${health.llm.local ? ", runs locally" : ", hosted"}`),
+        el("span", { className: "status-key", text: "FHIR R4" }),
+        el("span", {
+          text: !fhirOk ? "Unreachable" : health.fhir.in_memory ? "Demo data, in memory" : "Connected",
+        })),
+      el("span", { className: "status-item", title: `${health.llm.model} (configured: ${health.llm.configured})` },
+        el("span", { className: "status-key", text: "Planner" }),
+        el("span", { text: `${planner}, ${health.llm.local ? "local" : "hosted"}` })),
     ];
     if (health.llm.fallback) {
       items.push(el("span", { className: "status-flag", title: health.llm.reason || "" },
@@ -275,7 +278,10 @@ async function loadLibrary() {
     if (!groups.has(topic)) groups.set(topic, []);
     groups.get(topic).push(question);
   }
-  const order = [...TOPICS.map(([name]) => name), "Labs and medications"];
+  // Matching order puts the narrow single-patient rule first; display leads with the
+  // topics that have the most questions.
+  const order = ["Diabetes", "Heart and blood pressure", "Kidney", "Visits and admissions",
+    "Labs and medications", "A single patient"];
   put(clear(box), 
     ...order.filter((name) => groups.has(name)).map((name) =>
       el("div", { className: "library-group" },
@@ -537,7 +543,7 @@ function renderDerivation(response) {
           className: "step-purpose",
           text: `Runs only for the patients found in step ${index.get(step.depends_on) || step.depends_on}`,
         }),
-        count !== undefined && el("span", { className: "step-count", text: stepCountText(role, count) }));
+        count !== undefined && stepCount(role, count));
     }),
     // Screening happens after retrieval, so it is not a plan step -- but it is where
     // "120 patients with a potassium result" becomes "6 with an abnormal one", and a
@@ -550,9 +556,7 @@ function renderDerivation(response) {
         className: "step-purpose",
         text: `A patient stays only with a ${(plan.analysis.concepts || []).join(", ") || "screened"} result outside the sex-specific reference interval.`,
       }))),
-    el("p", { className: "outcome" },
-      "Result: ",
-      el("strong", { text: plural(response.cohort ? response.cohort.total_patients : (response.patients || []).length, "patient", "patients") })),
+    cohortBox(response.cohort ? response.cohort.total_patients : (response.patients || []).length),
     el("p", {
       className: "logic",
       text: plan.cohort_logic === "any"
@@ -569,10 +573,21 @@ function renderDerivation(response) {
   }
 }
 
-function stepCountText(role, count) {
-  if (role === "exclude") return `${plural(count, "patient", "patients")} removed`;
-  if (role === "context") return `Data for ${plural(count, "patient", "patients")}`;
-  return plural(count, "patient", "patients");
+// The count is the headline of each box in the flow, as n is in a CONSORT diagram.
+function stepCount(role, count) {
+  const label = role === "exclude" ? "removed" : role === "context" ? "with data"
+    : count === 1 ? "patient" : "patients";
+  return el("p", { className: "step-count" },
+    el("strong", { text: integerFormat.format(count) }),
+    el("span", { text: label }));
+}
+
+function cohortBox(total) {
+  return el("div", { className: "outcome" },
+    el("p", { className: "outcome-label", text: "Cohort" }),
+    el("p", { className: "step-count" },
+      el("strong", { text: integerFormat.format(total) }),
+      el("span", { text: total === 1 ? "patient" : "patients" })));
 }
 
 function renderLedger(response) {
@@ -587,11 +602,12 @@ function renderLedger(response) {
   ];
   put(clear($("ledger")), 
     el("p", { className: "question-echo", text: response.question }),
-    el("p", { className: "ledger-headline" },
-      integerFormat.format(count),
-      el("small", { text: count === 1 ? "patient" : "patients" })),
-    el("dl", null, items.map(([label, value]) =>
-      el("div", null, el("dt", { text: label }), el("dd", { text: value })))),
+    el("div", { className: "ledger-row" },
+      el("p", { className: "ledger-headline" },
+        integerFormat.format(count),
+        el("small", { text: count === 1 ? "patient" : "patients" })),
+      el("dl", null, items.map(([label, value]) =>
+        el("div", null, el("dt", { text: label }), el("dd", { text: value }))))),
     trace.truncated && el("p", { className: "callout caution", style: undefined },
       `Results were capped: ${total} matched, ${count} are shown. Narrow the question for the full set.`));
 }

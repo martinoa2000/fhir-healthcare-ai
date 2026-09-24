@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Web UI: the derivation is drawn as a cohort flow diagram, one box per search with
+  its patient count, exclusions branching off the main line and the resulting cohort as
+  the last box. The question, the patient count and the query cost head the results;
+  the question box holds its options and the run button; the header shows the FHIR
+  server and the planner as compact status labels.
+
 ## [0.1.0] - 2026-09-23
 
 First public version.
